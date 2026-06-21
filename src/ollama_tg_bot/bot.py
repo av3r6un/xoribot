@@ -8,7 +8,7 @@ import time
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .config import Settings
@@ -65,6 +65,7 @@ class BotApp:
     self.bot_id = me.id
     self.bot_username = self.bot_username or me.username
     logger.info('bot started id=%s username=%s config=%s', self.bot_id, self.bot_username, self.settings.safe_summary)
+    await self._send_startup_notification()
     await self.dp.start_polling(self.bot)
 
   def _register_handlers(self) -> None:
@@ -93,8 +94,9 @@ class BotApp:
       return
 
     logger.info(
-      'incoming message chat_id=%s user_id=%s length=%s',
+      'incoming message chat_id=%s thread_id=%s user_id=%s length=%s',
       message.chat.id,
+      message.message_thread_id,
       self._user_id(message),
       len(text),
     )
@@ -171,6 +173,7 @@ class BotApp:
       return
 
     self.sessions.add_assistant_message(session, response)
+
   async def _send_models(self, message: Message, session: Session) -> None:
     try:
       models = await self.ollama.models()
@@ -254,6 +257,33 @@ class BotApp:
     except TelegramBadRequest as exc:
       if 'message is not modified' in str(exc).lower(): return
       raise
+
+  async def _send_startup_notification(self) -> None:
+    if not self.settings.service_message_id: return
+
+    text = (
+      f'{self.settings.bot_name} запущен.\n'
+      f'Модель по умолчанию: {self.settings.ollama_model}\n'
+      f'Ollama: {self.settings.ollama_base_url}'
+    )
+
+    try:
+      await self.bot.send_message(
+        chat_id=self.settings.service_message_id,
+        message_thread_id=self.settings.service_message_thread_id,
+        text=text,
+      )
+      logger.info(
+        'startup notification sent chat_id=%s thread_id=%s',
+        self.settings.service_message_id,
+        self.settings.service_message_thread_id,
+      )
+    except TelegramAPIError:
+      logger.exception(
+        'startup notification failed chat_id=%s thread_id=%s',
+        self.settings.service_message_id,
+        self.settings.service_message_thread_id,
+      )
 
   def _status_text(self, session: Session) -> str:
     uptime = int(time.monotonic() - self.started_at)
