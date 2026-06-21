@@ -19,8 +19,19 @@ http://127.0.0.1:8081
 Проверить JSON API:
 
 ```bash
-curl 'http://127.0.0.1:8081/search?q=ollama&format=json'
+curl -fsS 'http://127.0.0.1:8081/search?q=ollama&format=json'
 ```
+
+`settings.yml` монтируется в контейнер как `/etc/searxng/settings.yml` и включает:
+
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+Это нужно, чтобы SearXNG не отдавал `403` на `format=json`.
 
 ## URL для бота
 
@@ -48,9 +59,13 @@ SEARXNG_HOST=127.0.0.1
 
 `SEARXNG_PORT=8081` наружный порт. Внутри контейнера SearXNG слушает `8080`.
 
-`SEARXNG_SECRET` лучше заменить перед публичным доступом.
+`server.secret_key` и `server.limiter` настраиваются в `settings.yml`. Перед публичным доступом замени `secret_key`, включи limiter и поставь reverse proxy.
 
-`SEARXNG_LIMITER=false` нормально для локального закрытого инструмента. Если будешь открывать наружу, включай limiter и reverse proxy.
+Если раньше уже запускался старый compose с volume `searxng-config`, он больше не используется. Его можно удалить после остановки SearXNG:
+
+```bash
+docker volume rm xoribot-searxng_searxng-config
+```
 
 ## Остановка
 

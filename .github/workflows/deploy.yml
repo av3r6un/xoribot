@@ -16,6 +16,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Version
+        shell: bash
+        run: |
+          set -e
+          merge_count="$(git rev-list --count --merges HEAD)"
+          version="0.1.${merge_count}"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          short_sha="$(git rev-parse --short HEAD)"
+
+          echo "APP_VERSION=${version}" >> "${GITHUB_ENV}"
+          echo "APP_BUILD_TIME=${build_time}" >> "${GITHUB_ENV}"
+          echo "APP_GIT_SHA=${short_sha}" >> "${GITHUB_ENV}"
+
+          {
+            echo "APP_VERSION=${version}"
+            echo "APP_BUILD_TIME=${build_time}"
+            echo "APP_GIT_SHA=${short_sha}"
+          } > VERSION
+
+          echo "Deploy version: ${version} (${short_sha})"
 
       - name: Pack Repository
         shell: bash
@@ -58,6 +81,11 @@ jobs:
             rm -f release.tgz
             cat > .env <<'EOF'
             ${{ secrets.DEPLOY_ENV_FILE }}
+            EOF
+            cat >> .env <<'EOF'
+            APP_VERSION=${{ env.APP_VERSION }}
+            APP_BUILD_TIME=${{ env.APP_BUILD_TIME }}
+            APP_GIT_SHA=${{ env.APP_GIT_SHA }}
             EOF
             docker compose down
             docker compose up -d --build

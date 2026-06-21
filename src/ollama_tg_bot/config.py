@@ -56,6 +56,9 @@ def _optional_int(name: str) -> int | None:
 
 @dataclass(frozen=True)
 class Settings:
+  app_version: str
+  app_build_time: str | None
+  app_git_sha: str | None
   telegram_bot_token: str
   telegram_proxy_url: str | None
   service_message_id: int | str | None
@@ -89,6 +92,8 @@ class Settings:
   @property
   def safe_summary(self) -> dict:
     return dict(
+      app_version=self.app_version,
+      app_git_sha=self.app_git_sha,
       ollama_base_url=self.ollama_base_url,
       ollama_model=self.ollama_model,
       telegram_proxy_enabled=bool(self.telegram_proxy_url),
@@ -128,6 +133,9 @@ def load_settings() -> Settings:
   if bot_username.startswith('@'): bot_username = bot_username[1:]
 
   return Settings(
+    app_version=os.getenv('APP_VERSION', 'local'),
+    app_build_time=os.getenv('APP_BUILD_TIME', '').strip() or None,
+    app_git_sha=os.getenv('APP_GIT_SHA', '').strip() or None,
     telegram_bot_token=token,
     telegram_proxy_url=os.getenv('TELEGRAM_PROXY_URL', '').strip() or None,
     service_message_id=_chat_id('SERVICE_MESSAGE_ID'),
