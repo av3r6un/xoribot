@@ -1,0 +1,12 @@
+.env
+.git
+.venv
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+AGENTS.md
+CONTEXT.md
+STYLE.md
+
