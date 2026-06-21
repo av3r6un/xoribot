@@ -278,6 +278,28 @@ class BotApp:
         self.settings.service_message_id,
         self.settings.service_message_thread_id,
       )
+    except TelegramBadRequest as exc:
+      if self.settings.service_message_thread_id and 'message thread not found' in str(exc).lower():
+        logger.warning(
+          'startup notification thread not found chat_id=%s thread_id=%s, retrying without thread',
+          self.settings.service_message_id,
+          self.settings.service_message_thread_id,
+        )
+        try:
+          await self.bot.send_message(
+            chat_id=self.settings.service_message_id,
+            text=text,
+          )
+          logger.info('startup notification sent chat_id=%s without thread', self.settings.service_message_id)
+          return
+        except TelegramAPIError:
+          logger.exception('startup notification fallback failed chat_id=%s', self.settings.service_message_id)
+          return
+      logger.exception(
+        'startup notification failed chat_id=%s thread_id=%s',
+        self.settings.service_message_id,
+        self.settings.service_message_thread_id,
+      )
     except TelegramAPIError:
       logger.exception(
         'startup notification failed chat_id=%s thread_id=%s',
