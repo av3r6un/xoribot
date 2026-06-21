@@ -6,7 +6,7 @@ services:
     container_name: xoribot-searxng
     restart: unless-stopped
     ports:
-      - "${SEARXNG_HOST:-127.0.0.1}:${SEARXNG_PORT:-8081}:8080"
+      - "${SEARXNG_HOST:-0.0.0.0}:${SEARXNG_PORT:-8081}:8080"
     environment:
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8081/}
       SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-before-public-use}

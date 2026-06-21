@@ -313,10 +313,14 @@ class BotApp:
   async def _send_startup_notification(self) -> None:
     if not self.settings.service_message_id: return
 
+    search_ok, search_status = await self.web_search.status()
+    search_icon = 'ok' if search_ok else 'fail'
+
     text = (
       f'{self.settings.bot_name} запущен.\n'
       f'Модель по умолчанию: {self.settings.ollama_model}\n'
-      f'Ollama: {self.settings.ollama_base_url}'
+      f'Ollama: {self.settings.ollama_base_url}\n'
+      f'Web-search: {search_icon} {search_status}'
     )
 
     try:

@@ -66,6 +66,29 @@ class WebSearchClient:
     logger.info('web search query_len=%s results=%s', len(query), len(results))
     return results
 
+  async def status(self) -> tuple[bool, str]:
+    if not self.settings.web_search_base_url:
+      return False, 'выключен: WEB_SEARCH_BASE_URL не задан'
+
+    try:
+      async with aiohttp.ClientSession(timeout=self.timeout) as session:
+        async with session.get(
+          f'{self.settings.web_search_base_url}/search',
+          params=dict(q='xori-healthcheck', format='json'),
+        ) as resp:
+          data = await resp.json(content_type=None)
+          if resp.status >= 400: return False, f'ошибка HTTP {resp.status}'
+    except TimeoutError:
+      return False, 'timeout'
+    except asyncio.TimeoutError:
+      return False, 'timeout'
+    except aiohttp.ClientError as exc:
+      return False, str(exc)
+
+    results = data.get('results') if isinstance(data, dict) else None
+    if not isinstance(results, list): return False, 'ответ без results'
+    return True, f'доступен: {self.settings.web_search_base_url}'
+
 
 def search_context(results: list[SearchResult]) -> str:
   if not results: return ''

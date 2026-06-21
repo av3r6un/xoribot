@@ -28,6 +28,8 @@ jobs:
             --exclude=__pycache__ \
             --exclude=.github \
             --exclude=.env \
+            --exclude='*/.env' \
+            --exclude='tools/searxng/.env' \
             -czf "${archive_path}" .
           cp "${archive_path}" release.tgz
 
