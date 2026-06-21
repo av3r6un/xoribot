@@ -318,6 +318,7 @@ class BotApp:
 
     text = (
       f'{self.settings.bot_name} запущен.\n'
+      f'Версия: {self.settings.app_version}\n'
       f'Модель по умолчанию: {self.settings.ollama_model}\n'
       f'Ollama: {self.settings.ollama_base_url}\n'
       f'Web-search: {search_icon} {search_status}'

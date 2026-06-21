@@ -18,6 +18,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Candidate Version
+        shell: bash
+        run: |
+          set -e
+          git fetch origin master
+          current_merges="$(git rev-list --count --merges origin/master 2>/dev/null || echo 0)"
+          version="0.1.$((current_merges + 1))"
+          echo "Candidate version after merge: ${version}"
+          echo "APP_VERSION=${version}" >> "${GITHUB_ENV}"
 
       - name: Build Image
         run: docker build -t xoribot-ci:latest .
