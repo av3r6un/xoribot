@@ -38,7 +38,13 @@ WEB_SEARCH_BASE_URL=http://host.docker.internal:8081
 
 ## Переменные
 
-`SEARXNG_HOST=127.0.0.1` оставляет SearXNG доступным только с host machine.
+`SEARXNG_HOST=0.0.0.0` нужен, если XoriBot запущен в Docker и ходит в SearXNG через `host.docker.internal`.
+
+Если XoriBot запущен локально без Docker и внешний доступ к SearXNG не нужен, можно поставить:
+
+```env
+SEARXNG_HOST=127.0.0.1
+```
 
 `SEARXNG_PORT=8081` наружный порт. Внутри контейнера SearXNG слушает `8080`.
 

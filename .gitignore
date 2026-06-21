@@ -11,7 +11,7 @@ wheels/
 
 # Local config
 .env
+**/.env
 AGENTS.md
 CONTEXT.md
 STYLE.md
-
