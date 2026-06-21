@@ -24,6 +24,7 @@ class Session:
   session_id: str
   chat_id: int
   user_id: int | None
+  model: str
   messages: list[Message]
   created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
   updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -35,8 +36,9 @@ class Session:
 
 class SessionManager:
 
-  def __init__(self, system_prompt: str, max_history_messages: int, max_context_chars: int) -> None:
+  def __init__(self, system_prompt: str, default_model: str, max_history_messages: int, max_context_chars: int) -> None:
     self.system_prompt = system_prompt
+    self.default_model = default_model
     self.max_history_messages = max_history_messages
     self.max_context_chars = max_context_chars
     self.sessions: dict[tuple[int, int | None], Session] = {}
@@ -69,6 +71,10 @@ class SessionManager:
     session.messages.append(Message(role='assistant', content=content))
     self._trim(session)
 
+  def set_model(self, session: Session, model: str) -> None:
+    session.model = model
+    session.updated_at = datetime.now(UTC)
+
   def ollama_messages(self, session: Session) -> list[dict]:
     self._trim(session)
     return [message.ollama_json for message in session.messages]
@@ -78,6 +84,7 @@ class SessionManager:
       session_id=uuid4().hex,
       chat_id=chat_id,
       user_id=user_id,
+      model=self.default_model,
       messages=[Message(role='system', content=self.system_prompt)],
     )
 

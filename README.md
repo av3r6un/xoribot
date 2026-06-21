@@ -8,7 +8,8 @@
 - групповые сообщения только из разрешённых групп и только по mention, reply на бота или адресной команде;
 - короткий in-memory контекст по чату;
 - ограничение истории и размера контекста;
-- команды `/start`, `/help`, `/reset`, `/new`, `/status`, `/model`, `/ping`;
+- команды `/start`, `/help`, `/reset`, `/new`, `/status`, `/model`, `/models`, `/ping`;
+- streaming-ответы через Ollama `/api/chat`;
 - безопасные сообщения об ошибках Ollama без stack trace пользователю.
 
 ## Настройка
@@ -34,7 +35,7 @@ ALLOW_ALL=false
 
 ```bash
 uv sync
-uv run python -m ollama_tg_bot.main
+uv run main.py
 ```
 
 Если используешь `pip`:
@@ -75,7 +76,7 @@ curl -s http://localhost:11434/api/chat \
         "content": "Ответь одним коротким предложением: что такое Docker?"
       }
     ],
-    "stream": false,
+    "stream": true,
     "options": {
       "num_ctx": 4096,
       "num_predict": 128,
@@ -99,6 +100,8 @@ curl -s http://localhost:11434/api/chat \
 
 `/model` — показать текущую модель.
 
+`/models` — получить список моделей из Ollama и выбрать модель для текущей сессии.
+
 `/ping` — быстрый ответ без обращения к Ollama.
 
 В группах используй адресные команды, например `/status@your_bot_username`, или reply на сообщение бота.
@@ -106,7 +109,6 @@ curl -s http://localhost:11434/api/chat \
 ## Ограничения первого этапа
 
 - контекст хранится только в памяти процесса;
-- streaming отключён;
 - нет tools/function calling;
 - нет web search;
 - нет RAG или долгосрочной памяти;

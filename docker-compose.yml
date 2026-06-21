@@ -1,6 +1,7 @@
 services:
   xoribot:
     build: .
+    container_name: xoribot
     env_file:
       - .env
     environment:
