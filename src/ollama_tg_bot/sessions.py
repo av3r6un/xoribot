@@ -24,7 +24,9 @@ class Session:
   session_id: str
   chat_id: int
   user_id: int | None
+  persona_id: str
   model: str
+  model_overridden: bool
   messages: list[Message]
   created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
   updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -36,30 +38,52 @@ class Session:
 
 class SessionManager:
 
-  def __init__(self, system_prompt: str, default_model: str, max_history_messages: int, max_context_chars: int) -> None:
-    self.system_prompt = system_prompt
+  def __init__(self, default_model: str, max_history_messages: int, max_context_chars: int) -> None:
     self.default_model = default_model
     self.max_history_messages = max_history_messages
     self.max_context_chars = max_context_chars
-    self.sessions: dict[tuple[int, int | None], Session] = {}
+    self.sessions: dict[tuple[int, int | None, str], Session] = {}
 
-  def get(self, chat_id: int, user_id: int | None = None) -> Session:
-    key = self._key(chat_id, user_id)
+  def get(
+    self,
+    chat_id: int,
+    user_id: int | None,
+    persona_id: str,
+    system_prompt: str,
+    model: str | None = None,
+  ) -> Session:
+    key = self._key(chat_id, user_id, persona_id)
     session = self.sessions.get(key)
-    if session: return session
-    session = self._create(chat_id, user_id)
+    if session:
+      self.sync_persona(session, system_prompt, model)
+      return session
+    session = self._create(chat_id, user_id, persona_id, system_prompt, model)
     self.sessions[key] = session
     return session
 
-  def reset(self, chat_id: int, user_id: int | None = None) -> Session:
-    session = self.get(chat_id, user_id)
-    session.messages = [Message(role='system', content=self.system_prompt)]
+  def reset(
+    self,
+    chat_id: int,
+    user_id: int | None,
+    persona_id: str,
+    system_prompt: str,
+    model: str | None = None,
+  ) -> Session:
+    session = self.get(chat_id, user_id, persona_id, system_prompt, model)
+    session.messages = [Message(role='system', content=system_prompt)]
     session.updated_at = datetime.now(UTC)
     return session
 
-  def new(self, chat_id: int, user_id: int | None = None) -> Session:
-    key = self._key(chat_id, user_id)
-    session = self._create(chat_id, user_id)
+  def new(
+    self,
+    chat_id: int,
+    user_id: int | None,
+    persona_id: str,
+    system_prompt: str,
+    model: str | None = None,
+  ) -> Session:
+    key = self._key(chat_id, user_id, persona_id)
+    session = self._create(chat_id, user_id, persona_id, system_prompt, model)
     self.sessions[key] = session
     return session
 
@@ -73,19 +97,40 @@ class SessionManager:
 
   def set_model(self, session: Session, model: str) -> None:
     session.model = model
+    session.model_overridden = True
+    session.updated_at = datetime.now(UTC)
+
+  def sync_persona(self, session: Session, system_prompt: str, model: str | None = None) -> None:
+    if session.messages and session.messages[0].role == 'system':
+      session.messages[0].content = system_prompt
+    else:
+      session.messages.insert(0, Message(role='system', content=system_prompt))
+
+    if not session.model_overridden:
+      session.model = model or self.default_model
+
     session.updated_at = datetime.now(UTC)
 
   def ollama_messages(self, session: Session) -> list[dict]:
     self._trim(session)
     return [message.ollama_json for message in session.messages]
 
-  def _create(self, chat_id: int, user_id: int | None) -> Session:
+  def _create(
+    self,
+    chat_id: int,
+    user_id: int | None,
+    persona_id: str,
+    system_prompt: str,
+    model: str | None = None,
+  ) -> Session:
     return Session(
       session_id=uuid4().hex,
       chat_id=chat_id,
       user_id=user_id,
-      model=self.default_model,
-      messages=[Message(role='system', content=self.system_prompt)],
+      persona_id=persona_id,
+      model=model or self.default_model,
+      model_overridden=False,
+      messages=[Message(role='system', content=system_prompt)],
     )
 
   def _trim(self, session: Session) -> None:
@@ -101,5 +146,5 @@ class SessionManager:
     session.updated_at = datetime.now(UTC)
 
   @staticmethod
-  def _key(chat_id: int, user_id: int | None) -> tuple[int, int | None]:
-    return (chat_id, user_id)
+  def _key(chat_id: int, user_id: int | None, persona_id: str) -> tuple[int, int | None, str]:
+    return (chat_id, user_id, persona_id)

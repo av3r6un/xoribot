@@ -60,6 +60,7 @@ class Settings:
   telegram_proxy_url: str | None
   service_message_id: int | str | None
   service_message_thread_id: int | None
+  personas_config_path: str
   ollama_base_url: str
   ollama_model: str
   bot_name: str
@@ -73,6 +74,9 @@ class Settings:
   max_input_chars: int
   max_context_chars: int
   max_telegram_message_chars: int
+  web_search_base_url: str | None
+  web_search_max_results: int
+  web_search_timeout_seconds: int
   ollama_num_ctx: int
   ollama_num_predict: int
   ollama_temperature: float
@@ -90,6 +94,7 @@ class Settings:
       telegram_proxy_enabled=bool(self.telegram_proxy_url),
       service_messages_enabled=bool(self.service_message_id),
       service_message_thread_id=self.service_message_thread_id,
+      personas_config_path=self.personas_config_path,
       bot_name=self.bot_name,
       bot_username=self.bot_username,
       allowed_users=len(self.allowed_user_ids),
@@ -98,6 +103,7 @@ class Settings:
       require_mention_in_groups=self.require_mention_in_groups,
       max_history_messages=self.max_history_messages,
       max_context_chars=self.max_context_chars,
+      web_search_enabled=bool(self.web_search_base_url),
     )
 
   @property
@@ -126,6 +132,7 @@ def load_settings() -> Settings:
     telegram_proxy_url=os.getenv('TELEGRAM_PROXY_URL', '').strip() or None,
     service_message_id=_chat_id('SERVICE_MESSAGE_ID'),
     service_message_thread_id=_optional_int('SERVICE_MESSAGE_THREAD_ID'),
+    personas_config_path=os.getenv('PERSONAS_CONFIG_PATH', 'personas.yaml'),
     ollama_base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/'),
     ollama_model=os.getenv('OLLAMA_MODEL', 'qwen-25-7b'),
     bot_name=os.getenv('BOT_NAME', 'Xori'),
@@ -139,6 +146,9 @@ def load_settings() -> Settings:
     max_input_chars=_int('MAX_INPUT_CHARS', 4000),
     max_context_chars=_int('MAX_CONTEXT_CHARS', 12000),
     max_telegram_message_chars=_int('MAX_TELEGRAM_MESSAGE_CHARS', 3900),
+    web_search_base_url=os.getenv('WEB_SEARCH_BASE_URL', '').strip().rstrip('/') or None,
+    web_search_max_results=_int('WEB_SEARCH_MAX_RESULTS', 5),
+    web_search_timeout_seconds=_int('WEB_SEARCH_TIMEOUT_SECONDS', 30),
     ollama_num_ctx=_int('OLLAMA_NUM_CTX', 4096),
     ollama_num_predict=_int('OLLAMA_NUM_PREDICT', 512),
     ollama_temperature=_float('OLLAMA_TEMPERATURE', 0.2),

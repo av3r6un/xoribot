@@ -1,0 +1,31 @@
+name: xoribot-searxng
+
+services:
+  searxng:
+    image: docker.io/searxng/searxng:${SEARXNG_VERSION:-latest}
+    container_name: xoribot-searxng
+    restart: unless-stopped
+    ports:
+      - "${SEARXNG_HOST:-127.0.0.1}:${SEARXNG_PORT:-8081}:8080"
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://localhost:8081/}
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-change-me-before-public-use}
+      SEARXNG_LIMITER: ${SEARXNG_LIMITER:-false}
+    volumes:
+      - searxng-config:/etc/searxng
+      - searxng-cache:/var/cache/searxng
+    depends_on:
+      - valkey
+
+  valkey:
+    image: docker.io/valkey/valkey:9-alpine
+    container_name: xoribot-searxng-valkey
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    volumes:
+      - valkey-data:/data
+
+volumes:
+  searxng-config:
+  searxng-cache:
+  valkey-data:

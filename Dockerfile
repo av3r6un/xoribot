@@ -7,7 +7,7 @@ ENV UV_LINK_MODE=copy
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md main.py ./
+COPY pyproject.toml uv.lock README.md main.py personas.yaml ./
 COPY src ./src
 
 RUN uv sync --frozen --no-dev

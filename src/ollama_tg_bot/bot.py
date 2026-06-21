@@ -13,6 +13,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from .config import Settings
 from .ollama_client import OllamaClient, OllamaError
+from .personas import Persona, PersonaManager
 from .security import is_allowed
 from .sessions import Session, SessionManager
 from .telegram_utils import (
@@ -21,6 +22,7 @@ from .telegram_utils import (
   should_answer_message,
   strip_bot_mention,
 )
+from .web_search import WebSearchClient, WebSearchError, search_context
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,7 @@ COMMANDS = {
   'status',
   'model',
   'models',
+  'agents',
   'ping',
 }
 
@@ -48,12 +51,13 @@ class BotApp:
     self.dp = Dispatcher()
     self.router = Router()
     self.ollama = OllamaClient(settings)
+    self.web_search = WebSearchClient(settings)
     self.sessions = SessionManager(
-      system_prompt=settings.system_prompt,
       default_model=settings.ollama_model,
       max_history_messages=settings.max_history_messages,
       max_context_chars=settings.max_context_chars,
     )
+    self.personas = PersonaManager(settings.personas_config_path, settings.ollama_model)
     self.model_choices: dict[str, str] = {}
     self.bot_id: int | None = None
     self.bot_username: str | None = settings.bot_username
@@ -80,6 +84,8 @@ class BotApp:
 
   async def _handle_text(self, message: Message) -> None:
     text = message.text or ''
+    persona_match = self.personas.match(text)
+    persona = persona_match.persona
 
     if not is_allowed(self.settings, message):
       logger.warning('access denied chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
@@ -90,6 +96,7 @@ class BotApp:
       self.bot_id,
       self.bot_username,
       self.settings.require_mention_in_groups,
+      has_persona_tag=bool(persona_match.matched_tag),
     ):
       return
 
@@ -102,22 +109,23 @@ class BotApp:
     )
     if self.settings.log_message_text: logger.info('incoming text=%s', text)
 
-    command = command_name(text)
+    routed_text = strip_bot_mention(persona_match.text, self.bot_username)
+    command = command_name(routed_text)
     if command and command[0] in COMMANDS:
-      await self._handle_command(message, command[0], command[1])
+      await self._handle_command(message, command[0], command[1], persona)
       return
 
-    await self._handle_chat_message(message, text)
+    await self._handle_chat_message(message, routed_text, persona)
 
-  async def _handle_command(self, message: Message, name: str, username: str | None) -> None:
+  async def _handle_command(self, message: Message, name: str, username: str | None, persona: Persona) -> None:
     if message.chat.type != ChatType.PRIVATE:
       if username and self.bot_username and username != self.bot_username.lower(): return
-      if not username and not is_reply_to_bot(message, self.bot_id): return
+      if not username and not is_reply_to_bot(message, self.bot_id) and not self.personas.has_tag(message.text): return
 
-    session = self._session(message)
+    session = self._session(message, persona)
 
     if name == 'start':
-      await message.answer('Бот активен. Напиши сообщение, чтобы начать диалог.\nКоманды: /reset, /new, /status, /models, /help')
+      await message.answer('Бот активен. Напиши сообщение, чтобы начать диалог.\nКоманды: /reset, /new, /status, /models, /agents, /help')
       return
     if name == 'help':
       await message.answer(
@@ -127,6 +135,7 @@ class BotApp:
         '/status — показать состояние текущей сессии\n'
         '/model — показать текущую модель\n'
         '/models — выбрать модель Ollama\n'
+        '/agents — показать доступные персоны\n'
         '/ping — проверить доступность бота'
       )
       return
@@ -140,35 +149,38 @@ class BotApp:
       logger.info('/models chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
       await self._send_models(message, session)
       return
+    if name == 'agents':
+      await self._send_agents(message)
+      return
     if name == 'reset':
       logger.info('/reset chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
-      self.sessions.reset(session.chat_id, session.user_id)
+      self.sessions.reset(session.chat_id, session.user_id, persona.uid, persona.system_prompt, persona.model)
       await message.answer('Контекст очищен.')
       return
     if name == 'new':
       logger.info('/new chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
-      self.sessions.new(session.chat_id, session.user_id)
+      self.sessions.new(session.chat_id, session.user_id, persona.uid, persona.system_prompt, persona.model)
       await message.answer('Создана новая сессия.')
       return
     if name == 'status':
       logger.info('/status chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
       await message.answer(self._status_text(session))
 
-  async def _handle_chat_message(self, message: Message, text: str) -> None:
-    text = strip_bot_mention(text, self.bot_username)
+  async def _handle_chat_message(self, message: Message, text: str, persona: Persona) -> None:
     if not text and not is_reply_to_bot(message, self.bot_id): return
 
     if len(text) > self.settings.max_input_chars:
       text = text[:self.settings.max_input_chars]
 
-    session = self._session(message)
+    session = self._session(message, persona)
     self.sessions.add_user_message(session, text)
 
     try:
       async with self._typing(message):
-        response = await self._stream_response(message, session)
-    except OllamaError as exc:
-      logger.exception('ollama error chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
+        tool_messages = await self._tool_messages(persona, text)
+        response = await self._stream_response(message, session, tool_messages)
+    except (OllamaError, WebSearchError) as exc:
+      logger.exception('chat error chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
       await message.answer(exc.user_message)
       return
 
@@ -189,15 +201,23 @@ class BotApp:
     buttons: list[list[InlineKeyboardButton]] = []
     self.model_choices = {}
     for model in models:
-      key = hashlib.sha1(model.encode('utf-8')).hexdigest()[:12]
+      key = hashlib.sha1(f'{session.persona_id}:{model}'.encode('utf-8')).hexdigest()[:12]
       self.model_choices[key] = model
       label = f'✓ {model}' if model == session.model else model
-      buttons.append([InlineKeyboardButton(text=label, callback_data=f'model:{key}')])
+      buttons.append([InlineKeyboardButton(text=label, callback_data=f'model:{session.persona_id}:{key}')])
 
     await message.answer(
-      f'Текущая модель: {session.model}\nВыбери модель:',
+      f'Персона: {session.persona_id}\nТекущая модель: {session.model}\nВыбери модель:',
       reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
+
+  async def _send_agents(self, message: Message) -> None:
+    lines = ['Персоны:']
+    for persona in self.personas.all():
+      tools = ', '.join(persona.tools) if persona.tools else 'без tools'
+      model = persona.model or self.settings.ollama_model
+      lines.append(f'{persona.tag_text} — {persona.name}; модель: {model}; {tools}')
+    await message.answer('\n'.join(lines))
 
   async def _handle_model_callback(self, callback: CallbackQuery) -> None:
     message = callback.message
@@ -209,18 +229,29 @@ class BotApp:
       await callback.answer('Нет доступа.', show_alert=True)
       return
 
-    key = (callback.data or '').removeprefix('model:')
+    parts = (callback.data or '').split(':', 2)
+    if len(parts) != 3:
+      await callback.answer()
+      return
+    _, persona_uid, key = parts
     model = self.model_choices.get(key)
     if not model:
       await callback.answer('Список моделей устарел. Вызови /models ещё раз.', show_alert=True)
       return
 
-    session = self.sessions.get(message.chat.id, self._session_user_id(message, callback.from_user.id))
+    persona = self.personas.get(persona_uid)
+    session = self.sessions.get(
+      message.chat.id,
+      self._session_user_id(message, callback.from_user.id),
+      persona.uid,
+      persona.system_prompt,
+      persona.model,
+    )
     self.sessions.set_model(session, model)
     await callback.answer(f'Модель выбрана: {model}')
-    await self._safe_edit(message, f'Текущая модель: {model}')
+    await self._safe_edit(message, f'Персона: {session.persona_id}\nТекущая модель: {model}')
 
-  async def _stream_response(self, message: Message, session: Session) -> str:
+  async def _stream_response(self, message: Message, session: Session, tool_messages: list[dict] | None = None) -> str:
     response = ''
     current_chunk = ''
     sent_message = await message.answer('...')
@@ -228,7 +259,11 @@ class BotApp:
     last_text = ''
     limit = self.settings.max_telegram_message_chars
 
-    async for delta in self.ollama.stream_chat(self.sessions.ollama_messages(session), session.model):
+    messages = self.sessions.ollama_messages(session)
+    if tool_messages:
+      messages = messages[:1] + tool_messages + messages[1:]
+
+    async for delta in self.ollama.stream_chat(messages, session.model):
       response += delta
       current_chunk += delta
 
@@ -250,6 +285,15 @@ class BotApp:
     final_text = current_chunk.strip() or 'Нет ответа.'
     await self._safe_edit(sent_message, final_text)
     return response.strip() or final_text
+
+  async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
+    if 'web_search' not in persona.tools: return []
+    if not self.settings.web_search_base_url: raise WebSearchError('WEB_SEARCH_BASE_URL is not configured')
+
+    results = await self.web_search.search(text)
+    context = search_context(results)
+    if not context: return []
+    return [dict(role='system', content=context)]
 
   async def _safe_edit(self, message: Message, text: str) -> None:
     try:
@@ -311,6 +355,7 @@ class BotApp:
     uptime = int(time.monotonic() - self.started_at)
     return (
       f'session_id: {session.session_id}\n'
+      f'персона: {session.persona_id}\n'
       f'модель: {session.model}\n'
       f'сообщений в истории: {len(session.messages)}\n'
       f'размер контекста: {session.context_chars} символов\n'
@@ -318,9 +363,9 @@ class BotApp:
       f'uptime: {uptime} сек.'
     )
 
-  def _session(self, message: Message) -> Session:
+  def _session(self, message: Message, persona: Persona) -> Session:
     user_id = self._session_user_id(message)
-    return self.sessions.get(message.chat.id, user_id)
+    return self.sessions.get(message.chat.id, user_id, persona.uid, persona.system_prompt, persona.model)
 
   @staticmethod
   def _user_id(message: Message) -> int | None:

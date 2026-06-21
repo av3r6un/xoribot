@@ -8,7 +8,8 @@
 - групповые сообщения только из разрешённых групп и только по mention, reply на бота или адресной команде;
 - короткий in-memory контекст по чату;
 - ограничение истории и размера контекста;
-- команды `/start`, `/help`, `/reset`, `/new`, `/status`, `/model`, `/models`, `/ping`;
+- команды `/start`, `/help`, `/reset`, `/new`, `/status`, `/model`, `/models`, `/agents`, `/ping`;
+- персоны через псевдо-теги из `personas.yaml`, например `@xori` и `@web`;
 - streaming-ответы через Ollama `/api/chat`;
 - безопасные сообщения об ошибках Ollama без stack trace пользователю.
 
@@ -21,8 +22,10 @@ TELEGRAM_BOT_TOKEN=123456:telegram-token
 TELEGRAM_PROXY_URL=socks5://127.0.0.1:1080
 SERVICE_MESSAGE_ID=1039572834
 SERVICE_MESSAGE_THREAD_ID=
+PERSONAS_CONFIG_PATH=personas.yaml
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen-25-7b
+WEB_SEARCH_BASE_URL=http://127.0.0.1:8081
 BOT_USERNAME=your_bot_username
 ALLOWED_USER_IDS=1039572834
 ALLOWED_GROUP_IDS=-1003991214476
@@ -52,6 +55,49 @@ SERVICE_MESSAGE_THREAD_ID=42
 4. Значение `chat_id` положи в `SERVICE_MESSAGE_ID`, значение `thread_id` — в `SERVICE_MESSAGE_THREAD_ID`.
 
 Если берёшь id из ссылки Telegram вида `https://t.me/c/1234567890/42/100`, то `42` обычно и есть id топика, а id группы для Bot API будет `-1001234567890`.
+
+## Персоны
+
+Персоны настраиваются в `personas.yaml`:
+
+```yaml
+default_persona: main
+
+personas:
+  main:
+    name: Xori
+    tags:
+      - "@xori"
+    model:
+    tools: []
+    system_prompt: >
+      Ты лаконичный и полезный Telegram-собеседник.
+
+  web-research:
+    name: Web Research
+    tags:
+      - "@web"
+    model:
+    tools:
+      - web_search
+    system_prompt: >
+      Ты web-research ассистент.
+```
+
+Бот перечитывает `personas.yaml` на лету при изменении файла. Можно менять вложенные поля вроде `system_prompt`, `model`, `tools`, `tags` без рестарта.
+
+Маршрутизация идёт только через `@`-теги:
+
+```text
+@xori объясни проще
+@web найди актуальную информацию
+```
+
+`@xori` и `@web` — это псевдо-теги в тексте, а не настоящие Telegram usernames. В группах бот должен получать такие сообщения: либо отключи BotFather privacy mode, либо пиши тег в reply на сообщение бота, либо используй настоящий mention бота вместе с псевдо-тегом.
+
+У каждой персоны отдельная история диалога. `/status @web`, `/model @web`, `/models @web`, `/reset @web` работают с web-research сессией.
+
+Если у персоны есть `tools: [web_search]`, бот делает запрос в SearXNG и добавляет результаты в prompt только для текущего ответа. Эти snippets не сохраняются в историю.
 
 ## Локальный запуск
 
@@ -84,6 +130,30 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 ```
 
 `docker-compose.yml` уже содержит `extra_hosts` для Linux.
+
+## Tools
+
+SearXNG для будущего web-search живёт отдельно:
+
+```bash
+cd tools/searxng
+cp .env.example .env
+docker compose up -d
+```
+
+После запуска JSON API будет доступен на `http://127.0.0.1:8081/search?q=test&format=json`.
+
+Чтобы `@web` использовал этот SearXNG из локального запуска:
+
+```env
+WEB_SEARCH_BASE_URL=http://127.0.0.1:8081
+```
+
+Если XoriBot запущен в Docker:
+
+```env
+WEB_SEARCH_BASE_URL=http://host.docker.internal:8081
+```
 
 ## Проверка Ollama
 
@@ -123,6 +193,8 @@ curl -s http://localhost:11434/api/chat \
 `/model` — показать текущую модель.
 
 `/models` — получить список моделей из Ollama и выбрать модель для текущей сессии.
+
+`/agents` — показать доступные персоны.
 
 `/ping` — быстрый ответ без обращения к Ollama.
 
