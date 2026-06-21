@@ -179,8 +179,12 @@ class BotApp:
       async with self._typing(message):
         tool_messages = await self._tool_messages(persona, text)
         response = await self._stream_response(message, session, tool_messages)
-    except (OllamaError, WebSearchError) as exc:
-      logger.exception('chat error chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
+    except WebSearchError as exc:
+      logger.warning('web-search error chat_id=%s user_id=%s error=%s', message.chat.id, self._user_id(message), exc)
+      await message.answer(exc.user_message)
+      return
+    except OllamaError as exc:
+      logger.exception('ollama error chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
       await message.answer(exc.user_message)
       return
 
@@ -288,7 +292,11 @@ class BotApp:
 
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
     if 'web_search' not in persona.tools: return []
-    if not self.settings.web_search_base_url: raise WebSearchError('WEB_SEARCH_BASE_URL is not configured')
+    if not self.settings.web_search_base_url:
+      raise WebSearchError(
+        'WEB_SEARCH_BASE_URL is not configured',
+        user_message='Web-search не настроен. Добавь WEB_SEARCH_BASE_URL в .env и перезапусти контейнер.',
+      )
 
     results = await self.web_search.search(text)
     context = search_context(results)

@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 class WebSearchError(Exception):
   user_message = 'Web-search недоступен. Проверь SearXNG и WEB_SEARCH_BASE_URL.'
 
+  def __init__(self, message: str | None = None, user_message: str | None = None) -> None:
+    super().__init__(message or self.user_message)
+    if user_message: self.user_message = user_message
+
 
 @dataclass(frozen=True)
 class SearchResult:
