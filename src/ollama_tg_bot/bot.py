@@ -5,6 +5,7 @@ import logging
 import time
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
 from aiogram.types import Message
 
@@ -40,7 +41,8 @@ class BotApp:
   def __init__(self, settings: Settings) -> None:
     self.settings = settings
     self.started_at = time.monotonic()
-    self.bot = Bot(token=settings.telegram_bot_token)
+    session = AiohttpSession(proxy=settings.telegram_proxy_url) if settings.telegram_proxy_url else None
+    self.bot = Bot(token=settings.telegram_bot_token, session=session)
     self.dp = Dispatcher()
     self.router = Router()
     self.ollama = OllamaClient(settings)

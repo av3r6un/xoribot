@@ -42,6 +42,7 @@ def _int_set(name: str) -> set[int]:
 @dataclass(frozen=True)
 class Settings:
   telegram_bot_token: str
+  telegram_proxy_url: str | None
   ollama_base_url: str
   ollama_model: str
   bot_name: str
@@ -69,6 +70,7 @@ class Settings:
     return dict(
       ollama_base_url=self.ollama_base_url,
       ollama_model=self.ollama_model,
+      telegram_proxy_enabled=bool(self.telegram_proxy_url),
       bot_name=self.bot_name,
       bot_username=self.bot_username,
       allowed_users=len(self.allowed_user_ids),
@@ -102,6 +104,7 @@ def load_settings() -> Settings:
 
   return Settings(
     telegram_bot_token=token,
+    telegram_proxy_url=os.getenv('TELEGRAM_PROXY_URL', '').strip() or None,
     ollama_base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/'),
     ollama_model=os.getenv('OLLAMA_MODEL', 'qwen-25-7b'),
     bot_name=os.getenv('BOT_NAME', 'Xori'),
