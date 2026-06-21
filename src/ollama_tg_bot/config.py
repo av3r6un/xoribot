@@ -39,10 +39,27 @@ def _int_set(name: str) -> set[int]:
   return result
 
 
+def _chat_id(name: str) -> int | str | None:
+  value = os.getenv(name, '').strip()
+  if not value: return None
+  try:
+    return int(value)
+  except ValueError:
+    return value
+
+
+def _optional_int(name: str) -> int | None:
+  value = os.getenv(name, '').strip()
+  if not value: return None
+  return int(value)
+
+
 @dataclass(frozen=True)
 class Settings:
   telegram_bot_token: str
   telegram_proxy_url: str | None
+  service_message_id: int | str | None
+  service_message_thread_id: int | None
   ollama_base_url: str
   ollama_model: str
   bot_name: str
@@ -71,6 +88,8 @@ class Settings:
       ollama_base_url=self.ollama_base_url,
       ollama_model=self.ollama_model,
       telegram_proxy_enabled=bool(self.telegram_proxy_url),
+      service_messages_enabled=bool(self.service_message_id),
+      service_message_thread_id=self.service_message_thread_id,
       bot_name=self.bot_name,
       bot_username=self.bot_username,
       allowed_users=len(self.allowed_user_ids),
@@ -105,6 +124,8 @@ def load_settings() -> Settings:
   return Settings(
     telegram_bot_token=token,
     telegram_proxy_url=os.getenv('TELEGRAM_PROXY_URL', '').strip() or None,
+    service_message_id=_chat_id('SERVICE_MESSAGE_ID'),
+    service_message_thread_id=_optional_int('SERVICE_MESSAGE_THREAD_ID'),
     ollama_base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/'),
     ollama_model=os.getenv('OLLAMA_MODEL', 'qwen-25-7b'),
     bot_name=os.getenv('BOT_NAME', 'Xori'),
