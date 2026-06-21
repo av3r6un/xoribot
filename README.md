@@ -17,6 +17,7 @@
 
 ```env
 TELEGRAM_BOT_TOKEN=123456:telegram-token
+TELEGRAM_PROXY_URL=socks5://127.0.0.1:1080
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen-25-7b
 BOT_USERNAME=your_bot_username
@@ -26,6 +27,8 @@ ALLOW_ALL=false
 ```
 
 `ALLOWED_USER_IDS` и `ALLOWED_GROUP_IDS` задаются через запятую. Если `ALLOW_ALL=false` и allowlist пустой, бот будет игнорировать сообщения.
+
+`TELEGRAM_PROXY_URL` нужен только для доступа к Telegram Bot API через прокси. Поддерживаются URL в формате `http://user:pass@host:port`, `socks4://host:port` и `socks5://host:port`. В Docker для прокси на host machine обычно указывай `host.docker.internal` вместо `127.0.0.1`.
 
 ## Локальный запуск
 
