@@ -9,3 +9,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    networks:
+      - xoribot-tools
+
+networks:
+  xoribot-tools:
+    external: true

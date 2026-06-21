@@ -14,6 +14,10 @@ services:
       - searxng-cache:/var/cache/searxng
     depends_on:
       - valkey
+    networks:
+      xoribot-tools:
+        aliases:
+          - searxng
 
   valkey:
     image: docker.io/valkey/valkey:9-alpine
@@ -22,7 +26,13 @@ services:
     restart: unless-stopped
     volumes:
       - valkey-data:/data
+    networks:
+      - xoribot-tools
 
 volumes:
   searxng-cache:
   valkey-data:
+
+networks:
+  xoribot-tools:
+    external: true

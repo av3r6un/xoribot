@@ -25,7 +25,7 @@ SERVICE_MESSAGE_THREAD_ID=
 PERSONAS_CONFIG_PATH=personas.yaml
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen-25-7b
-WEB_SEARCH_BASE_URL=http://127.0.0.1:8081
+WEB_SEARCH_BASE_URL=http://searxng:8080
 BOT_USERNAME=your_bot_username
 ALLOWED_USER_IDS=1039572834
 ALLOWED_GROUP_IDS=-1003991214476
@@ -138,12 +138,13 @@ SearXNG для будущего web-search живёт отдельно:
 ```bash
 cd tools/searxng
 cp .env.example .env
+docker network create xoribot-tools
 docker compose up -d
 ```
 
 После запуска JSON API будет доступен на `http://127.0.0.1:8081/search?q=test&format=json`.
 
-Чтобы `@web` использовал этот SearXNG из локального запуска:
+Чтобы `@web` использовал этот SearXNG из локального запуска без Docker:
 
 ```env
 WEB_SEARCH_BASE_URL=http://127.0.0.1:8081
@@ -152,8 +153,10 @@ WEB_SEARCH_BASE_URL=http://127.0.0.1:8081
 Если XoriBot запущен в Docker:
 
 ```env
-WEB_SEARCH_BASE_URL=http://host.docker.internal:8081
+WEB_SEARCH_BASE_URL=http://searxng:8080
 ```
+
+Оба compose-файла подключаются к external network `xoribot-tools`, поэтому её нужно создать один раз.
 
 ## Проверка Ollama
 

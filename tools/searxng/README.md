@@ -7,6 +7,7 @@
 ```bash
 cd tools/searxng
 cp .env.example .env
+docker network create xoribot-tools
 docker compose up -d
 ```
 
@@ -41,15 +42,15 @@ search:
 WEB_SEARCH_BASE_URL=http://127.0.0.1:8081
 ```
 
-Если бот запущен в Docker Compose на той же машине:
+Если бот запущен в Docker Compose:
 
 ```env
-WEB_SEARCH_BASE_URL=http://host.docker.internal:8081
+WEB_SEARCH_BASE_URL=http://searxng:8080
 ```
 
 ## Переменные
 
-`SEARXNG_HOST=0.0.0.0` нужен, если XoriBot запущен в Docker и ходит в SearXNG через `host.docker.internal`.
+`SEARXNG_HOST=0.0.0.0` публикует SearXNG на host-порт. Для связи XoriBot -> SearXNG внутри Docker используется network `xoribot-tools` и URL `http://searxng:8080`.
 
 Если XoriBot запущен локально без Docker и внешний доступ к SearXNG не нужен, можно поставить:
 
