@@ -5,7 +5,8 @@ personas:
     name: Xori
     tags:
       - "@xori"
-    model:
+    model: qwen25-7b
+    options: {}
     tools: []
     system_prompt: >
       Ты лаконичный и полезный Telegram-собеседник. Отвечай по существу,
@@ -15,7 +16,8 @@ personas:
     name: Web Research
     tags:
       - "@web"
-    model:
+    model: qwen25-7b
+    options: {}
     tools:
       - web_search
     system_prompt: >

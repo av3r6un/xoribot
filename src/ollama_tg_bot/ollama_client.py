@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 import aiohttp
 
 from .config import Settings
+from .personas import DEFAULT_MODEL
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ class OllamaError(Exception):
 
 
 class OllamaModelNotFound(OllamaError):
-  user_message = 'Модель не найдена в Ollama. Проверь OLLAMA_MODEL.'
+  user_message = 'Модель не найдена в Ollama. Проверь model в personas.yaml.'
 
 
 class OllamaTimeout(OllamaError):
@@ -64,13 +65,13 @@ class OllamaClient:
       if name: result.append(str(name))
     return sorted(result)
 
-  async def chat(self, messages: list[dict], model: str | None = None) -> str:
+  async def chat(self, messages: list[dict], model: str | None = None, options: dict | None = None) -> str:
     payload = dict(
-      model=model or self.settings.ollama_model,
+      model=model or DEFAULT_MODEL,
       messages=messages,
       stream=False,
-      options=self.settings.ollama_options,
     )
+    if options: payload['options'] = options
     context_chars = sum(len(message.get('content', '')) for message in messages)
     started_at = time.monotonic()
 
@@ -109,13 +110,18 @@ class OllamaClient:
     if not content: raise OllamaError('Ollama returned empty response')
     return content.strip()
 
-  async def stream_chat(self, messages: list[dict], model: str | None = None) -> AsyncIterator[str]:
+  async def stream_chat(
+    self,
+    messages: list[dict],
+    model: str | None = None,
+    options: dict | None = None,
+  ) -> AsyncIterator[str]:
     payload = dict(
-      model=model or self.settings.ollama_model,
+      model=model or DEFAULT_MODEL,
       messages=messages,
       stream=True,
-      options=self.settings.ollama_options,
     )
+    if options: payload['options'] = options
     context_chars = sum(len(message.get('content', '')) for message in messages)
     started_at = time.monotonic()
 
