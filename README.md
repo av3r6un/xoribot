@@ -32,6 +32,7 @@ ALLOWED_GROUP_IDS=-1003991214476
 ALLOW_ALL=false
 TELEGRAM_PARSE_MODE=Markdown
 TELEGRAM_RICH_MESSAGES_ENABLED=true
+TELEGRAM_RICH_THINKING_ENABLED=false
 TELEGRAM_THINKING_MARKDOWN=<tg-thinking>Думаю...</tg-thinking>
 TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS=5
 ```
@@ -43,6 +44,8 @@ TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS=5
 `TELEGRAM_PARSE_MODE=Markdown` включает базовое Telegram-форматирование ответов модели. Если модель часто отдаёт несовместимую Markdown-разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
 
 `TELEGRAM_RICH_MESSAGES_ENABLED=true` включает пробное использование Telegram Rich Messages: thinking-сообщение перед генерацией и финальный rich edit ответа. Если Telegram API или клиент не принимает rich message, бот откатывается на обычный text/Markdown.
+
+`TELEGRAM_RICH_THINKING_ENABLED=false` по умолчанию выключен, потому Telegram сейчас возвращает `RICH_MESSAGE_BLOCK_UNSUPPORTED` для `<tg-thinking>` в обычном `sendRichMessage`. Можно включить для экспериментов с новым Bot API, но бот всё равно откатится на plain text при ошибке.
 
 `TELEGRAM_THINKING_MARKDOWN` задаёт rich-разметку для thinking-сообщения.
 
