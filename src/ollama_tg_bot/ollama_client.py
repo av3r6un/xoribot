@@ -31,6 +31,11 @@ class OllamaClient:
   def __init__(self, settings: Settings) -> None:
     self.settings = settings
     self.timeout = aiohttp.ClientTimeout(total=settings.request_timeout_seconds)
+    self.stream_timeout = aiohttp.ClientTimeout(
+      total=None,
+      sock_connect=30,
+      sock_read=settings.request_timeout_seconds,
+    )
 
   async def models(self) -> list[str]:
     try:
@@ -115,7 +120,7 @@ class OllamaClient:
     started_at = time.monotonic()
 
     try:
-      async with aiohttp.ClientSession(timeout=self.timeout) as session:
+      async with aiohttp.ClientSession(timeout=self.stream_timeout) as session:
         async with session.post(f'{self.settings.ollama_base_url}/api/chat', json=payload) as resp:
           if resp.status == 404: raise OllamaModelNotFound()
           if resp.status >= 400:

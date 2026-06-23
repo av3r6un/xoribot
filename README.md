@@ -30,11 +30,14 @@ BOT_USERNAME=your_bot_username
 ALLOWED_USER_IDS=1039572834
 ALLOWED_GROUP_IDS=-1003991214476
 ALLOW_ALL=false
+TELEGRAM_PARSE_MODE=Markdown
 ```
 
 `ALLOWED_USER_IDS` и `ALLOWED_GROUP_IDS` задаются через запятую. Если `ALLOW_ALL=false` и allowlist пустой, бот будет игнорировать сообщения.
 
 `TELEGRAM_PROXY_URL` нужен только для доступа к Telegram Bot API через прокси. Поддерживаются URL в формате `http://user:pass@host:port`, `socks4://host:port` и `socks5://host:port`. В Docker для прокси на host machine обычно указывай `host.docker.internal` вместо `127.0.0.1`.
+
+`TELEGRAM_PARSE_MODE=Markdown` включает базовое Telegram-форматирование ответов модели. Если модель часто отдаёт несовместимую Markdown-разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
 
 `SERVICE_MESSAGE_ID` включает уведомление при каждом запуске бота. Это может быть Telegram user id, group id, channel id или публичный канал в формате `@channel_username`. Для канала бот должен быть админом, для пользователя пользователь должен сначала написать боту.
 

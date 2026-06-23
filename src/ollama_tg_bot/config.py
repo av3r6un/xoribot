@@ -73,6 +73,7 @@ class Settings:
   allow_all: bool
   require_mention_in_groups: bool
   log_message_text: bool
+  telegram_parse_mode: str | None
   max_history_messages: int
   max_input_chars: int
   max_context_chars: int
@@ -106,6 +107,7 @@ class Settings:
       allowed_groups=len(self.allowed_group_ids),
       allow_all=self.allow_all,
       require_mention_in_groups=self.require_mention_in_groups,
+      telegram_parse_mode=self.telegram_parse_mode,
       max_history_messages=self.max_history_messages,
       max_context_chars=self.max_context_chars,
       web_search_enabled=bool(self.web_search_base_url),
@@ -150,6 +152,7 @@ def load_settings() -> Settings:
     allow_all=_bool('ALLOW_ALL', False),
     require_mention_in_groups=_bool('REQUIRE_MENTION_IN_GROUPS', True),
     log_message_text=_bool('LOG_MESSAGE_TEXT', False),
+    telegram_parse_mode=os.getenv('TELEGRAM_PARSE_MODE', 'Markdown').strip() or None,
     max_history_messages=_int('MAX_HISTORY_MESSAGES', 12),
     max_input_chars=_int('MAX_INPUT_CHARS', 4000),
     max_context_chars=_int('MAX_CONTEXT_CHARS', 12000),
