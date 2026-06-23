@@ -74,6 +74,9 @@ class Settings:
   require_mention_in_groups: bool
   log_message_text: bool
   telegram_parse_mode: str | None
+  telegram_rich_messages_enabled: bool
+  telegram_thinking_markdown: str
+  telegram_stream_edit_interval_seconds: float
   max_history_messages: int
   max_input_chars: int
   max_context_chars: int
@@ -108,6 +111,8 @@ class Settings:
       allow_all=self.allow_all,
       require_mention_in_groups=self.require_mention_in_groups,
       telegram_parse_mode=self.telegram_parse_mode,
+      telegram_rich_messages_enabled=self.telegram_rich_messages_enabled,
+      telegram_stream_edit_interval_seconds=self.telegram_stream_edit_interval_seconds,
       max_history_messages=self.max_history_messages,
       max_context_chars=self.max_context_chars,
       web_search_enabled=bool(self.web_search_base_url),
@@ -152,7 +157,10 @@ def load_settings() -> Settings:
     allow_all=_bool('ALLOW_ALL', False),
     require_mention_in_groups=_bool('REQUIRE_MENTION_IN_GROUPS', True),
     log_message_text=_bool('LOG_MESSAGE_TEXT', False),
-    telegram_parse_mode=os.getenv('TELEGRAM_PARSE_MODE', 'Markdown').strip() or None,
+    telegram_parse_mode=_parse_mode(os.getenv('TELEGRAM_PARSE_MODE', 'Markdown')),
+    telegram_rich_messages_enabled=_bool('TELEGRAM_RICH_MESSAGES_ENABLED', True),
+    telegram_thinking_markdown=os.getenv('TELEGRAM_THINKING_MARKDOWN', '<tg-thinking>Думаю...</tg-thinking>'),
+    telegram_stream_edit_interval_seconds=_float('TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS', 5),
     max_history_messages=_int('MAX_HISTORY_MESSAGES', 12),
     max_input_chars=_int('MAX_INPUT_CHARS', 4000),
     max_context_chars=_int('MAX_CONTEXT_CHARS', 12000),
@@ -168,3 +176,11 @@ def load_settings() -> Settings:
     ollama_num_thread=_int('OLLAMA_NUM_THREAD', 12),
     request_timeout_seconds=_int('REQUEST_TIMEOUT_SECONDS', 300),
   )
+
+
+def _parse_mode(value: str | None) -> str | None:
+  value = (value or '').strip()
+  if not value: return None
+  if value.lower() == 'none': return None
+  if value.lower() == 'markdownv2': return 'Markdown'
+  return value

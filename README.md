@@ -31,6 +31,9 @@ ALLOWED_USER_IDS=1039572834
 ALLOWED_GROUP_IDS=-1003991214476
 ALLOW_ALL=false
 TELEGRAM_PARSE_MODE=Markdown
+TELEGRAM_RICH_MESSAGES_ENABLED=true
+TELEGRAM_THINKING_MARKDOWN=<tg-thinking>Думаю...</tg-thinking>
+TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS=5
 ```
 
 `ALLOWED_USER_IDS` и `ALLOWED_GROUP_IDS` задаются через запятую. Если `ALLOW_ALL=false` и allowlist пустой, бот будет игнорировать сообщения.
@@ -38,6 +41,12 @@ TELEGRAM_PARSE_MODE=Markdown
 `TELEGRAM_PROXY_URL` нужен только для доступа к Telegram Bot API через прокси. Поддерживаются URL в формате `http://user:pass@host:port`, `socks4://host:port` и `socks5://host:port`. В Docker для прокси на host machine обычно указывай `host.docker.internal` вместо `127.0.0.1`.
 
 `TELEGRAM_PARSE_MODE=Markdown` включает базовое Telegram-форматирование ответов модели. Если модель часто отдаёт несовместимую Markdown-разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
+
+`TELEGRAM_RICH_MESSAGES_ENABLED=true` включает пробное использование Telegram Rich Messages: thinking-сообщение перед генерацией и финальный rich edit ответа. Если Telegram API или клиент не принимает rich message, бот откатывается на обычный text/Markdown.
+
+`TELEGRAM_THINKING_MARKDOWN` задаёт rich-разметку для thinking-сообщения.
+
+`TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS` ограничивает частоту обновления streaming-сообщения. Если поставить слишком мало, Telegram может вернуть flood control.
 
 `SERVICE_MESSAGE_ID` включает уведомление при каждом запуске бота. Это может быть Telegram user id, group id, channel id или публичный канал в формате `@channel_username`. Для канала бот должен быть админом, для пользователя пользователь должен сначала написать боту.
 
