@@ -24,12 +24,6 @@ def _int(name: str, default: int) -> int:
   return int(value)
 
 
-def _float(name: str, default: float) -> float:
-  value = os.getenv(name)
-  if not value: return default
-  return float(value)
-
-
 def _int_set(name: str) -> set[int]:
   value = os.getenv(name, '')
   result: set[int] = set()
@@ -65,7 +59,6 @@ class Settings:
   service_message_thread_id: int | None
   personas_config_path: str
   ollama_base_url: str
-  ollama_model: str
   bot_name: str
   bot_username: str | None
   allowed_user_ids: set[int]
@@ -74,10 +67,7 @@ class Settings:
   require_mention_in_groups: bool
   log_message_text: bool
   telegram_parse_mode: str | None
-  telegram_rich_messages_enabled: bool
-  telegram_rich_thinking_enabled: bool
-  telegram_thinking_markdown: str
-  telegram_stream_edit_interval_seconds: float
+  telegram_stream_edit_interval_ms: int
   max_history_messages: int
   max_input_chars: int
   max_context_chars: int
@@ -85,12 +75,6 @@ class Settings:
   web_search_base_url: str | None
   web_search_max_results: int
   web_search_timeout_seconds: int
-  ollama_num_ctx: int
-  ollama_num_predict: int
-  ollama_temperature: float
-  ollama_top_p: float
-  ollama_top_k: int
-  ollama_num_thread: int
   request_timeout_seconds: int
   system_prompt: str = SYSTEM_PROMPT
 
@@ -100,7 +84,6 @@ class Settings:
       app_version=self.app_version,
       app_git_sha=self.app_git_sha,
       ollama_base_url=self.ollama_base_url,
-      ollama_model=self.ollama_model,
       telegram_proxy_enabled=bool(self.telegram_proxy_url),
       service_messages_enabled=bool(self.service_message_id),
       service_message_thread_id=self.service_message_thread_id,
@@ -112,23 +95,10 @@ class Settings:
       allow_all=self.allow_all,
       require_mention_in_groups=self.require_mention_in_groups,
       telegram_parse_mode=self.telegram_parse_mode,
-      telegram_rich_messages_enabled=self.telegram_rich_messages_enabled,
-      telegram_rich_thinking_enabled=self.telegram_rich_thinking_enabled,
-      telegram_stream_edit_interval_seconds=self.telegram_stream_edit_interval_seconds,
+      telegram_stream_edit_interval_ms=self.telegram_stream_edit_interval_ms,
       max_history_messages=self.max_history_messages,
       max_context_chars=self.max_context_chars,
       web_search_enabled=bool(self.web_search_base_url),
-    )
-
-  @property
-  def ollama_options(self) -> dict:
-    return dict(
-      num_ctx=self.ollama_num_ctx,
-      num_predict=self.ollama_num_predict,
-      temperature=self.ollama_temperature,
-      top_p=self.ollama_top_p,
-      top_k=self.ollama_top_k,
-      num_thread=self.ollama_num_thread,
     )
 
 
@@ -151,7 +121,6 @@ def load_settings() -> Settings:
     service_message_thread_id=_optional_int('SERVICE_MESSAGE_THREAD_ID'),
     personas_config_path=os.getenv('PERSONAS_CONFIG_PATH', 'personas.yaml'),
     ollama_base_url=os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/'),
-    ollama_model=os.getenv('OLLAMA_MODEL', 'qwen-25-7b'),
     bot_name=os.getenv('BOT_NAME', 'Xori'),
     bot_username=bot_username or None,
     allowed_user_ids=_int_set('ALLOWED_USER_IDS'),
@@ -160,10 +129,7 @@ def load_settings() -> Settings:
     require_mention_in_groups=_bool('REQUIRE_MENTION_IN_GROUPS', True),
     log_message_text=_bool('LOG_MESSAGE_TEXT', False),
     telegram_parse_mode=_parse_mode(os.getenv('TELEGRAM_PARSE_MODE', 'Markdown')),
-    telegram_rich_messages_enabled=_bool('TELEGRAM_RICH_MESSAGES_ENABLED', True),
-    telegram_rich_thinking_enabled=_bool('TELEGRAM_RICH_THINKING_ENABLED', False),
-    telegram_thinking_markdown=os.getenv('TELEGRAM_THINKING_MARKDOWN', '<tg-thinking>Думаю...</tg-thinking>'),
-    telegram_stream_edit_interval_seconds=_float('TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS', 5),
+    telegram_stream_edit_interval_ms=max(_int('TELEGRAM_STREAM_EDIT_INTERVAL_MS', 5000), 5000),
     max_history_messages=_int('MAX_HISTORY_MESSAGES', 12),
     max_input_chars=_int('MAX_INPUT_CHARS', 4000),
     max_context_chars=_int('MAX_CONTEXT_CHARS', 12000),
@@ -171,12 +137,6 @@ def load_settings() -> Settings:
     web_search_base_url=os.getenv('WEB_SEARCH_BASE_URL', '').strip().rstrip('/') or None,
     web_search_max_results=_int('WEB_SEARCH_MAX_RESULTS', 5),
     web_search_timeout_seconds=_int('WEB_SEARCH_TIMEOUT_SECONDS', 30),
-    ollama_num_ctx=_int('OLLAMA_NUM_CTX', 4096),
-    ollama_num_predict=_int('OLLAMA_NUM_PREDICT', 512),
-    ollama_temperature=_float('OLLAMA_TEMPERATURE', 0.2),
-    ollama_top_p=_float('OLLAMA_TOP_P', 0.95),
-    ollama_top_k=_int('OLLAMA_TOP_K', 20),
-    ollama_num_thread=_int('OLLAMA_NUM_THREAD', 12),
     request_timeout_seconds=_int('REQUEST_TIMEOUT_SECONDS', 300),
   )
 

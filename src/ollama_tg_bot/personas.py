@@ -10,6 +10,7 @@ from .config import SYSTEM_PROMPT
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_MODEL = 'qwen25-7b'
 
 
 @dataclass(frozen=True)
@@ -18,7 +19,8 @@ class Persona:
   name: str
   tags: tuple[str, ...]
   system_prompt: str
-  model: str | None
+  model: str
+  options: dict
   tools: tuple[str, ...]
 
   @property
@@ -35,9 +37,8 @@ class PersonaMatch:
 
 class PersonaManager:
 
-  def __init__(self, path: str, default_model: str) -> None:
+  def __init__(self, path: str) -> None:
     self.path = Path(path)
-    self.default_model = default_model
     self.default_uid = 'main'
     self.personas: dict[str, Persona] = {}
     self.tag_index: dict[str, str] = {}
@@ -129,7 +130,9 @@ class PersonaManager:
 
     system_prompt = str(payload.get('system_prompt') or SYSTEM_PROMPT).strip()
     model = payload.get('model')
-    model = str(model).strip() if model else None
+    model = str(model).strip() if model else DEFAULT_MODEL
+    options = payload.get('options') or {}
+    if not isinstance(options, dict): options = {}
 
     return Persona(
       uid=uid,
@@ -137,6 +140,7 @@ class PersonaManager:
       tags=clean_tags,
       system_prompt=system_prompt,
       model=model,
+      options=dict(options),
       tools=tuple(str(tool) for tool in tools),
     )
 
@@ -146,7 +150,8 @@ class PersonaManager:
       name='Xori',
       tags=('@xori',),
       system_prompt=SYSTEM_PROMPT,
-      model=self.default_model,
+      model=DEFAULT_MODEL,
+      options={},
       tools=(),
     )
     self.personas = {persona.uid: persona}

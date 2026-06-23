@@ -1,6 +1,6 @@
 # XoriBot
 
-Лёгкий Telegram-бот-собеседник, который напрямую обращается к локальной Ollama API через `/api/chat`. Первый этап намеренно простой: без tools, web search, browser automation, subagents и тяжёлых agent frameworks.
+Лёгкий Telegram-бот-собеседник, который напрямую обращается к локальной Ollama API через `/api/chat`, поддерживает персоны и отдельный web-search через SearXNG.
 
 ## Возможности
 
@@ -24,32 +24,23 @@ SERVICE_MESSAGE_ID=1039572834
 SERVICE_MESSAGE_THREAD_ID=
 PERSONAS_CONFIG_PATH=personas.yaml
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen-25-7b
 WEB_SEARCH_BASE_URL=http://searxng:8080
 BOT_USERNAME=your_bot_username
 ALLOWED_USER_IDS=1039572834
 ALLOWED_GROUP_IDS=-1003991214476
-ALLOW_ALL=false
-TELEGRAM_PARSE_MODE=Markdown
-TELEGRAM_RICH_MESSAGES_ENABLED=true
-TELEGRAM_RICH_THINKING_ENABLED=false
-TELEGRAM_THINKING_MARKDOWN=<tg-thinking>Думаю...</tg-thinking>
-TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS=5
 ```
 
-`ALLOWED_USER_IDS` и `ALLOWED_GROUP_IDS` задаются через запятую. Если `ALLOW_ALL=false` и allowlist пустой, бот будет игнорировать сообщения.
+`ALLOWED_USER_IDS` и `ALLOWED_GROUP_IDS` задаются через запятую. По умолчанию бот не отвечает никому вне allowlist.
 
 `TELEGRAM_PROXY_URL` нужен только для доступа к Telegram Bot API через прокси. Поддерживаются URL в формате `http://user:pass@host:port`, `socks4://host:port` и `socks5://host:port`. В Docker для прокси на host machine обычно указывай `host.docker.internal` вместо `127.0.0.1`.
 
-`TELEGRAM_PARSE_MODE=Markdown` включает базовое Telegram-форматирование ответов модели. Если модель часто отдаёт несовместимую Markdown-разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
+`TELEGRAM_PARSE_MODE` по умолчанию равен `Markdown`. Если модель отдаёт несовместимую Markdown-разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
 
-`TELEGRAM_RICH_MESSAGES_ENABLED=true` включает пробное использование Telegram Rich Messages: thinking-сообщение перед генерацией и финальный rich edit ответа. Если Telegram API или клиент не принимает rich message, бот откатывается на обычный text/Markdown.
+`TELEGRAM_STREAM_EDIT_INTERVAL_MS` ограничивает частоту обновления streaming-сообщения. Минимум в коде — `5000` мс, потому меньшие значения легко приводят к Telegram flood control на `editMessageText`.
 
-`TELEGRAM_RICH_THINKING_ENABLED=false` по умолчанию выключен, потому Telegram сейчас возвращает `RICH_MESSAGE_BLOCK_UNSUPPORTED` для `<tg-thinking>` в обычном `sendRichMessage`. Можно включить для экспериментов с новым Bot API, но бот всё равно откатится на plain text при ошибке.
+`ALLOW_ALL`, `REQUIRE_MENTION_IN_GROUPS`, `LOG_MESSAGE_TEXT`, `MAX_HISTORY_MESSAGES`, `MAX_INPUT_CHARS`, `MAX_CONTEXT_CHARS`, `MAX_TELEGRAM_MESSAGE_CHARS`, `WEB_SEARCH_MAX_RESULTS`, `WEB_SEARCH_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `TELEGRAM_PARSE_MODE` и `TELEGRAM_STREAM_EDIT_INTERVAL_MS` можно задать через env, если нужно переопределить дефолты. В `.env.example` они не вынесены специально, чтобы рабочий `.env` оставался коротким.
 
-`TELEGRAM_THINKING_MARKDOWN` задаёт rich-разметку для thinking-сообщения.
-
-`TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS` ограничивает частоту обновления streaming-сообщения. Если поставить слишком мало, Telegram может вернуть flood control.
+`tg-thinking` сейчас не используется: Telegram возвращал `RICH_MESSAGE_BLOCK_UNSUPPORTED` для такого блока в обычном rich-message вызове, поэтому бот отправляет простой placeholder `...` и потом редактирует его.
 
 `SERVICE_MESSAGE_ID` включает уведомление при каждом запуске бота. Это может быть Telegram user id, group id, channel id или публичный канал в формате `@channel_username`. Для канала бот должен быть админом, для пользователя пользователь должен сначала написать боту.
 
@@ -83,7 +74,8 @@ personas:
     name: Xori
     tags:
       - "@xori"
-    model:
+    model: qwen25-7b
+    options: {}
     tools: []
     system_prompt: >
       Ты лаконичный и полезный Telegram-собеседник.
@@ -92,14 +84,23 @@ personas:
     name: Web Research
     tags:
       - "@web"
-    model:
+    model: qwen25-7b
+    options:
+      num_ctx: 4096
+      num_predict: 2048
+      temperature: 0.2
+      top_p: 0.95
+      top_k: 20
+      num_thread: 12
     tools:
       - web_search
     system_prompt: >
       Ты web-research ассистент.
 ```
 
-Бот перечитывает `personas.yaml` на лету при изменении файла. Можно менять вложенные поля вроде `system_prompt`, `model`, `tools`, `tags` без рестарта.
+Бот перечитывает `personas.yaml` на лету при изменении файла. Можно менять вложенные поля вроде `system_prompt`, `model`, `options`, `tools`, `tags` без рестарта.
+
+`options` передаётся напрямую в Ollama `/api/chat` для конкретной персоны. Если `options: {}`, бот не отправляет sampling/контекстные overrides и использует параметры самой Ollama-модели.
 
 Маршрутизация идёт только через `@`-теги:
 
@@ -179,7 +180,7 @@ WEB_SEARCH_BASE_URL=http://searxng:8080
 curl -s http://localhost:11434/api/chat \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen-25-7b",
+    "model": "qwen25-7b",
     "messages": [
       {
         "role": "user",
@@ -218,10 +219,8 @@ curl -s http://localhost:11434/api/chat \
 
 В группах используй адресные команды, например `/status@your_bot_username`, или reply на сообщение бота.
 
-## Ограничения первого этапа
+## Ограничения
 
 - контекст хранится только в памяти процесса;
-- нет tools/function calling;
-- нет web search;
 - нет RAG или долгосрочной памяти;
 - prompt содержит только короткий system prompt и ограниченную историю диалога.

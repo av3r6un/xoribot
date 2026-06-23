@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import time
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputRichMessage, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .config import Settings
 from .ollama_client import OllamaClient, OllamaError
@@ -52,14 +53,14 @@ class BotApp:
     self.router = Router()
     self.ollama = OllamaClient(settings)
     self.web_search = WebSearchClient(settings)
+    self.personas = PersonaManager(settings.personas_config_path)
+    default_persona = self.personas.default()
     self.sessions = SessionManager(
-      default_model=settings.ollama_model,
+      default_model=default_persona.model,
       max_history_messages=settings.max_history_messages,
       max_context_chars=settings.max_context_chars,
     )
-    self.personas = PersonaManager(settings.personas_config_path, settings.ollama_model)
     self.model_choices: dict[str, str] = {}
-    self.rich_thinking_supported = settings.telegram_rich_thinking_enabled
     self.bot_id: int | None = None
     self.bot_username: str | None = settings.bot_username
     self._register_handlers()
@@ -179,7 +180,7 @@ class BotApp:
     try:
       async with self._typing(message):
         tool_messages = await self._tool_messages(persona, text)
-        response = await self._stream_response(message, session, tool_messages)
+        response = await self._stream_response(message, session, persona, tool_messages)
     except WebSearchError as exc:
       logger.warning('web-search error chat_id=%s user_id=%s error=%s', message.chat.id, self._user_id(message), exc)
       await self._safe_answer(message, exc.user_message, parse_mode=None)
@@ -220,8 +221,7 @@ class BotApp:
     lines = ['Персоны:']
     for persona in self.personas.all():
       tools = ', '.join(persona.tools) if persona.tools else 'без tools'
-      model = persona.model or self.settings.ollama_model
-      lines.append(f'{persona.tag_text} — {persona.name}; модель: {model}; {tools}')
+      lines.append(f'{persona.tag_text} — {persona.name}; модель: {persona.model}; {tools}')
     await message.answer('\n'.join(lines))
 
   async def _handle_model_callback(self, callback: CallbackQuery) -> None:
@@ -256,27 +256,33 @@ class BotApp:
     await callback.answer(f'Модель выбрана: {model}')
     await self._safe_edit(message, f'Персона: {session.persona_id}\nТекущая модель: {model}')
 
-  async def _stream_response(self, message: Message, session: Session, tool_messages: list[dict] | None = None) -> str:
+  async def _stream_response(
+    self,
+    message: Message,
+    session: Session,
+    persona: Persona,
+    tool_messages: list[dict] | None = None,
+  ) -> str:
     response = ''
     visible_text = ''
     sent_message = await self._send_thinking_message(message)
     last_edit_at = 0.0
     last_text = ''
     limit = min(self.settings.max_telegram_message_chars, 3900)
-    edit_interval = self.settings.telegram_stream_edit_interval_seconds
+    edit_interval = self.settings.telegram_stream_edit_interval_ms / 1000
 
     messages = self.sessions.ollama_messages(session)
     if tool_messages:
       messages = messages[:1] + tool_messages + messages[1:]
 
     try:
-      async for delta in self.ollama.stream_chat(messages, session.model):
+      async for delta in self.ollama.stream_chat(messages, session.model, persona.options):
         response += delta
         visible_text += delta
 
         while len(visible_text) >= limit:
           part, visible_text = self._split_for_telegram(visible_text, limit)
-          await self._safe_edit(sent_message, part, parse_mode=self.settings.telegram_parse_mode, wait_retry=True, rich=True)
+          await self._safe_final_edit(sent_message, part)
           sent_message = await self._send_thinking_message(message)
           last_edit_at = 0.0
           last_text = ''
@@ -292,13 +298,14 @@ class BotApp:
       if not response.strip(): raise
       final_text = visible_text.strip()
       if final_text:
-        await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode, wait_retry=True, rich=True)
+        await self._safe_final_edit(sent_message, final_text)
       await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
       logger.warning('ollama stream interrupted after partial response: %s', exc)
       return response.strip()
 
     final_text = visible_text.strip() or 'Нет ответа.'
-    await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode, wait_retry=True, rich=True)
+    await self._safe_final_edit(sent_message, final_text)
+    logger.info('telegram stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
     return response.strip() or final_text
 
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
@@ -326,21 +333,12 @@ class BotApp:
       await asyncio.sleep(exc.retry_after)
       return await message.answer(text, parse_mode=parse_mode)
 
+  async def _safe_final_edit(self, message: Message, text: str) -> bool:
+    parse_mode = self.settings.telegram_parse_mode if self._markdown_looks_complete(text) else None
+    return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=True)
+
   async def _send_thinking_message(self, message: Message) -> Message:
-    if self.settings.telegram_rich_messages_enabled and self.rich_thinking_supported:
-      try:
-        return await self.bot.send_rich_message(
-          chat_id=message.chat.id,
-          message_thread_id=message.message_thread_id,
-          rich_message=InputRichMessage(markdown=self.settings.telegram_thinking_markdown),
-        )
-      except TelegramAPIError as exc:
-        if 'RICH_MESSAGE_BLOCK_UNSUPPORTED' in str(exc):
-          self.rich_thinking_supported = False
-          logger.warning('rich thinking block is unsupported by Telegram, disabling it for this process')
-        else:
-          logger.warning('rich thinking message failed, falling back to plain text: %s', exc)
-    return await self._safe_answer(message, 'Думаю...', parse_mode=None)
+    return await self._safe_answer(message, '...', parse_mode=None)
 
   async def _safe_edit(
     self,
@@ -348,19 +346,12 @@ class BotApp:
     text: str,
     parse_mode: str | None = None,
     wait_retry: bool = False,
-    rich: bool = False,
   ) -> bool:
     try:
-      if rich and self.settings.telegram_rich_messages_enabled:
-        await message.edit_text(rich_message=InputRichMessage(markdown=text))
-        return True
       await message.edit_text(text, parse_mode=parse_mode)
       return True
     except TelegramBadRequest as exc:
       if 'message is not modified' in str(exc).lower(): return False
-      if rich and self.settings.telegram_rich_messages_enabled:
-        logger.warning('rich edit failed, falling back to text edit: %s', exc)
-        return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=wait_retry, rich=False)
       if self._is_parse_error(exc):
         return await self._safe_edit(message, text, parse_mode=None, wait_retry=wait_retry)
       raise
@@ -368,7 +359,7 @@ class BotApp:
       logger.warning('telegram edit flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
       if not wait_retry: return False
       await asyncio.sleep(exc.retry_after)
-      return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=False, rich=rich)
+      return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=False)
 
   @staticmethod
   def _split_for_telegram(text: str, limit: int) -> tuple[str, str]:
@@ -387,6 +378,32 @@ class BotApp:
       or 'markdown' in text
     )
 
+  @staticmethod
+  def _markdown_looks_complete(text: str) -> bool:
+    if text.count('```') % 2: return False
+    without_fences = re.sub(r'```.*?```', '', text, flags=re.S)
+    if without_fences.count('`') % 2: return False
+    if text.count('**') % 2: return False
+    if text.count('__') % 2: return False
+
+    balance = 0
+    escaped = False
+    for char in text:
+      if escaped:
+        escaped = False
+        continue
+      if char == '\\':
+        escaped = True
+        continue
+      if char == '[':
+        balance += 1
+      elif char == ']':
+        if balance <= 0: return False
+        balance -= 1
+    if balance: return False
+
+    return True
+
   async def _send_startup_notification(self) -> None:
     if not self.settings.service_message_id: return
 
@@ -396,7 +413,7 @@ class BotApp:
     text = (
       f'{self.settings.bot_name} запущен.\n'
       f'Версия: {self.settings.app_version}\n'
-      f'Модель по умолчанию: {self.settings.ollama_model}\n'
+      f'Модель по умолчанию: {self.personas.default().model}\n'
       f'Ollama: {self.settings.ollama_base_url}\n'
       f'Web-search: {search_icon} {search_status}'
     )
