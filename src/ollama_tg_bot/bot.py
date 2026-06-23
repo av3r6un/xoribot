@@ -6,7 +6,6 @@ import logging
 import time
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
@@ -48,8 +47,7 @@ class BotApp:
     self.settings = settings
     self.started_at = time.monotonic()
     session = AiohttpSession(proxy=settings.telegram_proxy_url) if settings.telegram_proxy_url else None
-    default = DefaultBotProperties(parse_mode=settings.telegram_parse_mode)
-    self.bot = Bot(token=settings.telegram_bot_token, session=session, default=default)
+    self.bot = Bot(token=settings.telegram_bot_token, session=session)
     self.dp = Dispatcher()
     self.router = Router()
     self.ollama = OllamaClient(settings)
@@ -183,11 +181,11 @@ class BotApp:
         response = await self._stream_response(message, session, tool_messages)
     except WebSearchError as exc:
       logger.warning('web-search error chat_id=%s user_id=%s error=%s', message.chat.id, self._user_id(message), exc)
-      await message.answer(exc.user_message)
+      await self._safe_answer(message, exc.user_message, parse_mode=None)
       return
     except OllamaError as exc:
       logger.exception('ollama error chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
-      await message.answer(exc.user_message)
+      await self._safe_answer(message, exc.user_message, parse_mode=None)
       return
 
     self.sessions.add_assistant_message(session, response)
@@ -260,7 +258,7 @@ class BotApp:
   async def _stream_response(self, message: Message, session: Session, tool_messages: list[dict] | None = None) -> str:
     response = ''
     visible_text = ''
-    sent_message = await self._safe_answer(message, '...')
+    sent_message = await self._safe_answer(message, '...', parse_mode=None)
     last_edit_at = 0.0
     last_text = ''
     limit = min(self.settings.max_telegram_message_chars, 3900)
@@ -276,28 +274,28 @@ class BotApp:
 
         while len(visible_text) >= limit:
           part, visible_text = self._split_for_telegram(visible_text, limit)
-          await self._safe_edit(sent_message, part)
-          sent_message = await self._safe_answer(message, '...')
+          await self._safe_edit(sent_message, part, parse_mode=self.settings.telegram_parse_mode)
+          sent_message = await self._safe_answer(message, '...', parse_mode=None)
           last_edit_at = 0.0
           last_text = ''
 
         now = time.monotonic()
         text = visible_text.strip()
         if text and text != last_text and now - last_edit_at >= 1:
-          await self._safe_edit(sent_message, text)
+          await self._safe_edit(sent_message, text, parse_mode=self.settings.telegram_parse_mode)
           last_edit_at = now
           last_text = text
     except OllamaError as exc:
       if not response.strip(): raise
       final_text = visible_text.strip()
       if final_text:
-        await self._safe_edit(sent_message, final_text)
-      await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}')
+        await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode)
+      await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
       logger.warning('ollama stream interrupted after partial response: %s', exc)
       return response.strip()
 
     final_text = visible_text.strip() or 'Нет ответа.'
-    await self._safe_edit(sent_message, final_text)
+    await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode)
     return response.strip() or final_text
 
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
@@ -313,17 +311,17 @@ class BotApp:
     if not context: return []
     return [dict(role='system', content=context)]
 
-  async def _safe_answer(self, message: Message, text: str) -> Message:
+  async def _safe_answer(self, message: Message, text: str, parse_mode: str | None = None) -> Message:
     try:
-      return await message.answer(text)
+      return await message.answer(text, parse_mode=parse_mode)
     except TelegramBadRequest as exc:
       if self._is_parse_error(exc):
         return await message.answer(text, parse_mode=None)
       raise
 
-  async def _safe_edit(self, message: Message, text: str) -> None:
+  async def _safe_edit(self, message: Message, text: str, parse_mode: str | None = None) -> None:
     try:
-      await message.edit_text(text)
+      await message.edit_text(text, parse_mode=parse_mode)
     except TelegramBadRequest as exc:
       if 'message is not modified' in str(exc).lower(): return
       if self._is_parse_error(exc):
