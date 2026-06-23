@@ -8,8 +8,8 @@ import time
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputRichMessage, Message
 
 from .config import Settings
 from .ollama_client import OllamaClient, OllamaError
@@ -258,10 +258,11 @@ class BotApp:
   async def _stream_response(self, message: Message, session: Session, tool_messages: list[dict] | None = None) -> str:
     response = ''
     visible_text = ''
-    sent_message = await self._safe_answer(message, '...', parse_mode=None)
+    sent_message = await self._send_thinking_message(message)
     last_edit_at = 0.0
     last_text = ''
     limit = min(self.settings.max_telegram_message_chars, 3900)
+    edit_interval = self.settings.telegram_stream_edit_interval_seconds
 
     messages = self.sessions.ollama_messages(session)
     if tool_messages:
@@ -274,28 +275,29 @@ class BotApp:
 
         while len(visible_text) >= limit:
           part, visible_text = self._split_for_telegram(visible_text, limit)
-          await self._safe_edit(sent_message, part, parse_mode=self.settings.telegram_parse_mode)
-          sent_message = await self._safe_answer(message, '...', parse_mode=None)
+          await self._safe_edit(sent_message, part, parse_mode=self.settings.telegram_parse_mode, wait_retry=True, rich=True)
+          sent_message = await self._send_thinking_message(message)
           last_edit_at = 0.0
           last_text = ''
 
         now = time.monotonic()
         text = visible_text.strip()
-        if text and text != last_text and now - last_edit_at >= 1:
-          await self._safe_edit(sent_message, text, parse_mode=self.settings.telegram_parse_mode)
-          last_edit_at = now
-          last_text = text
+        if text and text != last_text and now - last_edit_at >= edit_interval:
+          edited = await self._safe_edit(sent_message, text, parse_mode=self.settings.telegram_parse_mode)
+          if edited:
+            last_edit_at = now
+            last_text = text
     except OllamaError as exc:
       if not response.strip(): raise
       final_text = visible_text.strip()
       if final_text:
-        await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode)
+        await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode, wait_retry=True, rich=True)
       await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
       logger.warning('ollama stream interrupted after partial response: %s', exc)
       return response.strip()
 
     final_text = visible_text.strip() or 'Нет ответа.'
-    await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode)
+    await self._safe_edit(sent_message, final_text, parse_mode=self.settings.telegram_parse_mode, wait_retry=True, rich=True)
     return response.strip() or final_text
 
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
@@ -318,16 +320,50 @@ class BotApp:
       if self._is_parse_error(exc):
         return await message.answer(text, parse_mode=None)
       raise
+    except TelegramRetryAfter as exc:
+      logger.warning('telegram send flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
+      await asyncio.sleep(exc.retry_after)
+      return await message.answer(text, parse_mode=parse_mode)
 
-  async def _safe_edit(self, message: Message, text: str, parse_mode: str | None = None) -> None:
+  async def _send_thinking_message(self, message: Message) -> Message:
+    if self.settings.telegram_rich_messages_enabled:
+      try:
+        return await self.bot.send_rich_message(
+          chat_id=message.chat.id,
+          message_thread_id=message.message_thread_id,
+          rich_message=InputRichMessage(markdown=self.settings.telegram_thinking_markdown),
+        )
+      except TelegramAPIError as exc:
+        logger.warning('rich thinking message failed, falling back to plain text: %s', exc)
+    return await self._safe_answer(message, 'Думаю...', parse_mode=None)
+
+  async def _safe_edit(
+    self,
+    message: Message,
+    text: str,
+    parse_mode: str | None = None,
+    wait_retry: bool = False,
+    rich: bool = False,
+  ) -> bool:
     try:
+      if rich and self.settings.telegram_rich_messages_enabled:
+        await message.edit_text(rich_message=InputRichMessage(markdown=text))
+        return True
       await message.edit_text(text, parse_mode=parse_mode)
+      return True
     except TelegramBadRequest as exc:
-      if 'message is not modified' in str(exc).lower(): return
+      if 'message is not modified' in str(exc).lower(): return False
+      if rich and self.settings.telegram_rich_messages_enabled:
+        logger.warning('rich edit failed, falling back to text edit: %s', exc)
+        return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=wait_retry, rich=False)
       if self._is_parse_error(exc):
-        await message.edit_text(text, parse_mode=None)
-        return
+        return await self._safe_edit(message, text, parse_mode=None, wait_retry=wait_retry)
       raise
+    except TelegramRetryAfter as exc:
+      logger.warning('telegram edit flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
+      if not wait_retry: return False
+      await asyncio.sleep(exc.retry_after)
+      return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=False, rich=rich)
 
   @staticmethod
   def _split_for_telegram(text: str, limit: int) -> tuple[str, str]:
