@@ -75,6 +75,7 @@ class Settings:
   log_message_text: bool
   telegram_parse_mode: str | None
   telegram_rich_messages_enabled: bool
+  telegram_rich_thinking_enabled: bool
   telegram_thinking_markdown: str
   telegram_stream_edit_interval_seconds: float
   max_history_messages: int
@@ -112,6 +113,7 @@ class Settings:
       require_mention_in_groups=self.require_mention_in_groups,
       telegram_parse_mode=self.telegram_parse_mode,
       telegram_rich_messages_enabled=self.telegram_rich_messages_enabled,
+      telegram_rich_thinking_enabled=self.telegram_rich_thinking_enabled,
       telegram_stream_edit_interval_seconds=self.telegram_stream_edit_interval_seconds,
       max_history_messages=self.max_history_messages,
       max_context_chars=self.max_context_chars,
@@ -159,6 +161,7 @@ def load_settings() -> Settings:
     log_message_text=_bool('LOG_MESSAGE_TEXT', False),
     telegram_parse_mode=_parse_mode(os.getenv('TELEGRAM_PARSE_MODE', 'Markdown')),
     telegram_rich_messages_enabled=_bool('TELEGRAM_RICH_MESSAGES_ENABLED', True),
+    telegram_rich_thinking_enabled=_bool('TELEGRAM_RICH_THINKING_ENABLED', False),
     telegram_thinking_markdown=os.getenv('TELEGRAM_THINKING_MARKDOWN', '<tg-thinking>Думаю...</tg-thinking>'),
     telegram_stream_edit_interval_seconds=_float('TELEGRAM_STREAM_EDIT_INTERVAL_SECONDS', 5),
     max_history_messages=_int('MAX_HISTORY_MESSAGES', 12),

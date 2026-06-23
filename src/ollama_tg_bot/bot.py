@@ -59,6 +59,7 @@ class BotApp:
     )
     self.personas = PersonaManager(settings.personas_config_path, settings.ollama_model)
     self.model_choices: dict[str, str] = {}
+    self.rich_thinking_supported = settings.telegram_rich_thinking_enabled
     self.bot_id: int | None = None
     self.bot_username: str | None = settings.bot_username
     self._register_handlers()
@@ -326,7 +327,7 @@ class BotApp:
       return await message.answer(text, parse_mode=parse_mode)
 
   async def _send_thinking_message(self, message: Message) -> Message:
-    if self.settings.telegram_rich_messages_enabled:
+    if self.settings.telegram_rich_messages_enabled and self.rich_thinking_supported:
       try:
         return await self.bot.send_rich_message(
           chat_id=message.chat.id,
@@ -334,7 +335,11 @@ class BotApp:
           rich_message=InputRichMessage(markdown=self.settings.telegram_thinking_markdown),
         )
       except TelegramAPIError as exc:
-        logger.warning('rich thinking message failed, falling back to plain text: %s', exc)
+        if 'RICH_MESSAGE_BLOCK_UNSUPPORTED' in str(exc):
+          self.rich_thinking_supported = False
+          logger.warning('rich thinking block is unsupported by Telegram, disabling it for this process')
+        else:
+          logger.warning('rich thinking message failed, falling back to plain text: %s', exc)
     return await self._safe_answer(message, 'Думаю...', parse_mode=None)
 
   async def _safe_edit(
