@@ -45,12 +45,14 @@ def should_answer_message(
   bot_username: str | None,
   require_mention_in_groups: bool,
   has_persona_tag: bool = False,
+  text: str | None = None,
 ) -> bool:
+  text = message.text if text is None else text
   if message.chat.type == ChatType.PRIVATE: return True
   if message.chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}: return False
-  if is_addressed_command(message.text, bot_username): return True
+  if is_addressed_command(text, bot_username): return True
   if is_reply_to_bot(message, bot_id): return True
-  if has_bot_mention(message.text, bot_username): return True
+  if has_bot_mention(text, bot_username): return True
   if has_persona_tag: return True
   return not require_mention_in_groups
 

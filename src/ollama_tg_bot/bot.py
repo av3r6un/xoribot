@@ -4,13 +4,16 @@ import asyncio
 import hashlib
 import logging
 import re
+import tempfile
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import Audio, CallbackQuery, Document, InlineKeyboardButton, InlineKeyboardMarkup, Message, Voice
 
 from .config import Settings
 from .ollama_client import OllamaClient, OllamaError
@@ -20,10 +23,13 @@ from .sessions import Session, SessionManager
 from .telegram_utils import (
   command_name,
   is_reply_to_bot,
+  message_chunks,
   should_answer_message,
   strip_bot_mention,
 )
+from .transcription import TranscriptionService
 from .web_search import WebSearchClient, WebSearchError, search_context
+from .whisper_client import WhisperError
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +47,31 @@ COMMANDS = {
   'ping',
 }
 
+TRANSCRIBABLE_AUDIO_EXTENSIONS = {
+  '.3gp',
+  '.aac',
+  '.amr',
+  '.caf',
+  '.flac',
+  '.m4a',
+  '.mp3',
+  '.mp4',
+  '.mpga',
+  '.oga',
+  '.ogg',
+  '.opus',
+  '.wav',
+  '.weba',
+  '.webm',
+}
+
+
+@dataclass(frozen=True)
+class AudioAttachment:
+  file_id: str
+  file_name: str
+  media_kind: str
+
 
 class BotApp:
 
@@ -52,6 +83,7 @@ class BotApp:
     self.dp = Dispatcher()
     self.router = Router()
     self.ollama = OllamaClient(settings)
+    self.transcription = TranscriptionService(settings)
     self.web_search = WebSearchClient(settings)
     self.personas = PersonaManager(settings.personas_config_path)
     default_persona = self.personas.default()
@@ -76,13 +108,21 @@ class BotApp:
 
   def _register_handlers(self) -> None:
 
-    @self.router.message(F.text)
-    async def handle_text(message: Message) -> None:
-      await self._handle_text(message)
+    @self.router.message()
+    async def handle_message(message: Message) -> None:
+      await self._handle_message(message)
 
     @self.router.callback_query(F.data.startswith('model:'))
     async def handle_model_callback(callback: CallbackQuery) -> None:
       await self._handle_model_callback(callback)
+
+  async def _handle_message(self, message: Message) -> None:
+    if message.text:
+      await self._handle_text(message)
+      return
+
+    if self._audio_attachment(message):
+      await self._handle_audio_message(message)
 
   async def _handle_text(self, message: Message) -> None:
     text = message.text or ''
@@ -119,10 +159,72 @@ class BotApp:
 
     await self._handle_chat_message(message, routed_text, persona)
 
+  async def _handle_audio_message(self, message: Message) -> None:
+    attachment = self._audio_attachment(message)
+    if not attachment: return
+
+    text = message.caption or ''
+    persona_match = self.personas.match(text)
+    persona = persona_match.persona
+
+    if not is_allowed(self.settings, message):
+      logger.warning('access denied chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
+      return
+
+    if not should_answer_message(
+      message,
+      self.bot_id,
+      self.bot_username,
+      self.settings.require_mention_in_groups,
+      has_persona_tag=bool(persona_match.matched_tag),
+      text=text,
+    ):
+      return
+
+    routed_text = strip_bot_mention(persona_match.text, self.bot_username)
+    command = command_name(routed_text)
+    if command and command[0] in COMMANDS:
+      await self._handle_command(message, command[0], command[1], persona)
+      return
+
+    logger.info(
+      'incoming audio chat_id=%s thread_id=%s user_id=%s file_name=%s media_kind=%s caption_len=%s',
+      message.chat.id,
+      message.message_thread_id,
+      self._user_id(message),
+      attachment.file_name,
+      attachment.media_kind,
+      len(routed_text),
+    )
+
+    try:
+      transcript = await self._transcribe_audio_message(message, attachment)
+    except WhisperError as exc:
+      logger.exception(
+        'whisper error chat_id=%s user_id=%s file_name=%s',
+        message.chat.id,
+        self._user_id(message),
+        attachment.file_name,
+      )
+      await self._safe_answer(message, exc.user_message, parse_mode=None)
+      return
+
+    if routed_text:
+      await self._handle_chat_message(
+        message,
+        f'{routed_text}\n\n{self._transcription_prompt(attachment, transcript)}',
+        persona,
+      )
+      return
+
+    session = self._session(message, persona)
+    self.sessions.add_user_message(session, self._transcription_prompt(attachment, transcript))
+
   async def _handle_command(self, message: Message, name: str, username: str | None, persona: Persona) -> None:
+    source_text = message.text or message.caption
     if message.chat.type != ChatType.PRIVATE:
       if username and self.bot_username and username != self.bot_username.lower(): return
-      if not username and not is_reply_to_bot(message, self.bot_id) and not self.personas.has_tag(message.text): return
+      if not username and not is_reply_to_bot(message, self.bot_id) and not self.personas.has_tag(source_text): return
 
     session = self._session(message, persona)
 
@@ -469,6 +571,112 @@ class BotApp:
       f'Ollama: {self.settings.ollama_base_url}\n'
       f'uptime: {uptime} сек.'
     )
+
+  async def _transcribe_audio_message(self, message: Message, attachment: AudioAttachment) -> str:
+    progress = await self._safe_answer(message, self._transcription_status_text(attachment), parse_mode=None)
+    preview_limit = max(min(self.settings.max_telegram_message_chars, 3900) - 200, 1000)
+    transcript_parts: list[str] = []
+
+    async with self._typing(message):
+      with tempfile.TemporaryDirectory(prefix='xoribot-upload-') as temp_dir_name:
+        source_path = Path(temp_dir_name) / attachment.file_name
+        await self._download_file(attachment.file_id, source_path)
+
+        async for chunk in self.transcription.transcribe(source_path):
+          if not chunk.text: continue
+          transcript_parts.append(chunk.text.strip())
+          preview = self._transcription_preview(
+            attachment,
+            '\n\n'.join(transcript_parts).strip(),
+            chunk.index,
+            chunk.total,
+            preview_limit,
+          )
+          await self._safe_edit(progress, preview, parse_mode=None, wait_retry=True)
+
+    transcript = '\n\n'.join(part for part in transcript_parts if part).strip()
+    if not transcript:
+      raise WhisperError('Whisper returned empty transcript', user_message='Whisper вернул пустую расшифровку.')
+
+    await self._send_transcript(message, progress, attachment, transcript)
+    return transcript
+
+  async def _download_file(self, file_id: str, destination: Path) -> None:
+    file = await self.bot.get_file(file_id)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    await self.bot.download(file, destination=destination)
+
+  async def _send_transcript(
+    self,
+    message: Message,
+    progress: Message,
+    attachment: AudioAttachment,
+    transcript: str,
+  ) -> None:
+    full_text = self._transcription_result_text(attachment, transcript)
+    chunks = message_chunks(full_text, self.settings.max_telegram_message_chars)
+    if not chunks:
+      chunks = [full_text]
+
+    await self._safe_final_edit(progress, chunks[0])
+    for chunk in chunks[1:]:
+      await self._safe_answer(message, chunk, parse_mode=None)
+
+  @staticmethod
+  def _transcription_prompt(attachment: AudioAttachment, transcript: str) -> str:
+    return f'Расшифровка аудио "{attachment.file_name}":\n{transcript}'.strip()
+
+  @staticmethod
+  def _transcription_status_text(attachment: AudioAttachment) -> str:
+    return f'Распознаю аудио: {attachment.file_name}'
+
+  @classmethod
+  def _transcription_result_text(cls, attachment: AudioAttachment, transcript: str) -> str:
+    return f'Расшифровка аудио: {attachment.file_name}\n\n{transcript}'.strip()
+
+  @classmethod
+  def _transcription_preview(
+    cls,
+    attachment: AudioAttachment,
+    transcript: str,
+    index: int,
+    total: int,
+    preview_limit: int,
+  ) -> str:
+    header = f'Расшифровка аудио: {attachment.file_name}\nЧасть {index}/{total}'
+    body = transcript.strip()
+    if len(body) > preview_limit:
+      body = f'...{body[-preview_limit:]}'
+    return f'{header}\n\n{body}'.strip()
+
+  @staticmethod
+  def _audio_attachment(message: Message) -> AudioAttachment | None:
+    voice = message.voice
+    if isinstance(voice, Voice):
+      return AudioAttachment(
+        file_id=voice.file_id,
+        file_name=f'voice_{voice.file_unique_id}.ogg',
+        media_kind='voice',
+      )
+
+    audio = message.audio
+    if isinstance(audio, Audio):
+      file_name = audio.file_name or f'audio_{audio.file_unique_id}.mp3'
+      return AudioAttachment(file_id=audio.file_id, file_name=file_name, media_kind='audio')
+
+    document = message.document
+    if isinstance(document, Document) and BotApp._is_audio_document(document):
+      file_name = document.file_name or f'document_{document.file_unique_id}'
+      return AudioAttachment(file_id=document.file_id, file_name=file_name, media_kind='document')
+
+    return None
+
+  @staticmethod
+  def _is_audio_document(document: Document) -> bool:
+    mime_type = (document.mime_type or '').lower()
+    if mime_type.startswith('audio/'): return True
+    file_name = document.file_name or ''
+    return Path(file_name).suffix.lower() in TRANSCRIBABLE_AUDIO_EXTENSIONS
 
   def _session(self, message: Message, persona: Persona) -> Session:
     user_id = self._session_user_id(message)

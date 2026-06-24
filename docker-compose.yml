@@ -1,11 +1,15 @@
 services:
   xoribot:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_FFMPEG: ${INSTALL_FFMPEG:-1}
     container_name: xoribot
     env_file:
       - .env
     environment:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      WHISPER_BASE_URL: ${WHISPER_BASE_URL:-http://whisper:8000}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
