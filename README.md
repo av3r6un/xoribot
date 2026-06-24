@@ -34,7 +34,7 @@ ALLOWED_GROUP_IDS=-1003991214476
 
 `TELEGRAM_PROXY_URL` нужен только для доступа к Telegram Bot API через прокси. Поддерживаются URL в формате `http://user:pass@host:port`, `socks4://host:port` и `socks5://host:port`. В Docker для прокси на host machine обычно указывай `host.docker.internal` вместо `127.0.0.1`.
 
-`TELEGRAM_PARSE_MODE` по умолчанию равен `Markdown`. Если модель отдаёт несовместимую Markdown-разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
+`TELEGRAM_PARSE_MODE` по умолчанию равен `HTML`. Бот конвертирует обычный Markdown модели (`**bold**`, `### title`, ссылки и code blocks) в Telegram HTML. Если Telegram не примет разметку, бот автоматически повторяет отправку/редактирование этого сообщения без parse mode, чтобы ответ не обрывался.
 
 `TELEGRAM_STREAM_EDIT_INTERVAL_MS` ограничивает частоту обновления streaming-сообщения. Минимум в коде — `5000` мс, потому меньшие значения легко приводят к Telegram flood control на `editMessageText`.
 
