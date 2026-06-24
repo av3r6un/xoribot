@@ -54,7 +54,7 @@ services:
     env_file:
       - ./tools/whisper/.env
     environment:
-      - PRELOAD_MODELS: ["Systran/faster-whisper-small"]
+      PRELOAD_MODELS: '["Systran/faster-whisper-small"]'
     volumes:
       - ./models:/root/.cache/huggingface
     networks:
