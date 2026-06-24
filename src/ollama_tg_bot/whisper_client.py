@@ -9,6 +9,9 @@ import aiohttp
 from .config import Settings
 
 
+WHISPER_HEALTH_PATH = '/health'
+
+
 class WhisperError(Exception):
   user_message = 'Whisper недоступен. Проверь сервис и WHISPER_BASE_URL.'
 
@@ -73,7 +76,7 @@ class WhisperClient:
 
     try:
       async with aiohttp.ClientSession(timeout=self.timeout) as session:
-        async with session.get(self.settings.whisper_base_url) as resp:
+        async with session.get(f'{self.settings.whisper_base_url}{WHISPER_HEALTH_PATH}') as resp:
           await resp.read()
     except TimeoutError:
       return False, 'timeout'
@@ -84,7 +87,7 @@ class WhisperClient:
 
     if resp.status >= 400:
       return False, f'HTTP {resp.status}'
-    return True, f'available: {self.settings.whisper_base_url}'
+    return True, f'available: {self.settings.whisper_base_url}{WHISPER_HEALTH_PATH}'
 
   @staticmethod
   def _extract_text(payload: object) -> str:
