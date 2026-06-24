@@ -25,6 +25,7 @@ SERVICE_MESSAGE_THREAD_ID=
 PERSONAS_CONFIG_PATH=personas.yaml
 OLLAMA_BASE_URL=http://localhost:11434
 WEB_SEARCH_BASE_URL=http://searxng:8080
+WHISPER_BASE_URL=http://whisper:8000
 BOT_USERNAME=your_bot_username
 ALLOWED_USER_IDS=1039572834
 ALLOWED_GROUP_IDS=-1003991214476
@@ -146,6 +147,10 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 ```
 
 `docker-compose.yml` уже содержит `extra_hosts` для Linux.
+
+Для распознавания аудио bot использует ffmpeg внутри контейнера и Whisper backend по `WHISPER_BASE_URL`.
+Поддерживаются Telegram `voice`, `audio` и `document`, если документ выглядит как аудиофайл по mime-type или расширению.
+Длинные записи режутся на части по `WHISPER_SEGMENT_SECONDS` (по умолчанию 600 секунд), и бот показывает промежуточный текст по мере обработки сегментов.
 
 ## Tools
 
