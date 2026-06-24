@@ -46,7 +46,7 @@ services:
         aliases: [searxng]
     
   whisper:
-    image: fedirz/faster-whisper-server:latest
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
     container_name: whisper
     restart: unless-stopped
     ports:
