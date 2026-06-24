@@ -65,6 +65,18 @@ class OllamaClient:
       if name: result.append(str(name))
     return sorted(result)
 
+  async def status(self) -> tuple[bool, str]:
+    try:
+      models = await self.models()
+    except OllamaTimeout:
+      return False, 'timeout'
+    except OllamaError as exc:
+      return False, str(exc)
+
+    if not models:
+      return True, f'available: {self.settings.ollama_base_url}, no models'
+    return True, f'available: {self.settings.ollama_base_url}'
+
   async def chat(self, messages: list[dict], model: str | None = None, options: dict | None = None) -> str:
     payload = dict(
       model=model or DEFAULT_MODEL,

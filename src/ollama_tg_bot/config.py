@@ -76,6 +76,7 @@ class Settings:
   web_search_max_results: int
   web_search_timeout_seconds: int
   whisper_base_url: str | None
+  whisper_model: str
   whisper_transcribe_path: str
   whisper_timeout_seconds: int
   whisper_segment_seconds: int
@@ -105,6 +106,7 @@ class Settings:
       max_context_chars=self.max_context_chars,
       web_search_enabled=bool(self.web_search_base_url),
       whisper_enabled=bool(self.whisper_base_url),
+      whisper_model=self.whisper_model,
       whisper_segment_seconds=self.whisper_segment_seconds,
     )
 
@@ -145,6 +147,7 @@ def load_settings() -> Settings:
     web_search_max_results=_int('WEB_SEARCH_MAX_RESULTS', 5),
     web_search_timeout_seconds=_int('WEB_SEARCH_TIMEOUT_SECONDS', 30),
     whisper_base_url=os.getenv('WHISPER_BASE_URL', '').strip().rstrip('/') or None,
+    whisper_model=os.getenv('WHISPER_MODEL', 'Systran/faster-whisper-small').strip() or 'Systran/faster-whisper-small',
     whisper_transcribe_path=os.getenv('WHISPER_TRANSCRIBE_PATH', '/v1/audio/transcriptions').strip() or '/v1/audio/transcriptions',
     whisper_timeout_seconds=_int('WHISPER_TIMEOUT_SECONDS', 1800),
     whisper_segment_seconds=max(_int('WHISPER_SEGMENT_SECONDS', 600), 60),

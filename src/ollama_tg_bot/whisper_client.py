@@ -35,7 +35,7 @@ class WhisperClient:
       )
 
     data = aiohttp.FormData()
-    data.add_field('model', 'whisper-1')
+    data.add_field('model', self.settings.whisper_model)
     data.add_field('response_format', 'verbose_json')
     with audio_path.open('rb') as stream:
       data.add_field('file', stream, filename=audio_path.name, content_type='audio/flac')
@@ -66,6 +66,25 @@ class WhisperClient:
     if not transcript:
       raise WhisperError('Whisper returned empty transcript')
     return transcript
+
+  async def status(self) -> tuple[bool, str]:
+    if not self.settings.whisper_base_url:
+      return False, 'disabled: WHISPER_BASE_URL is not set'
+
+    try:
+      async with aiohttp.ClientSession(timeout=self.timeout) as session:
+        async with session.get(self.settings.whisper_base_url) as resp:
+          await resp.read()
+    except TimeoutError:
+      return False, 'timeout'
+    except asyncio.TimeoutError:
+      return False, 'timeout'
+    except aiohttp.ClientError as exc:
+      return False, str(exc)
+
+    if resp.status >= 400:
+      return False, f'HTTP {resp.status}'
+    return True, f'available: {self.settings.whisper_base_url}'
 
   @staticmethod
   def _extract_text(payload: object) -> str:
