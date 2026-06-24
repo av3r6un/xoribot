@@ -53,6 +53,8 @@ services:
       - "8000:8000"
     env_file:
       - ./tools/whisper/.env
+    environment:
+      - PRELOAD_MODELS: ["Systran/faster-whisper-small"]
     volumes:
       - ./models:/root/.cache/huggingface
     networks:
