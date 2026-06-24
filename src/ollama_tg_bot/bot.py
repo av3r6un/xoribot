@@ -29,7 +29,7 @@ from .telegram_utils import (
 )
 from .transcription import TranscriptionService
 from .web_search import WebSearchClient, WebSearchError, search_context
-from .whisper_client import WhisperError
+from .whisper_client import WhisperClient, WhisperError
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ class BotApp:
     self.dp = Dispatcher()
     self.router = Router()
     self.ollama = OllamaClient(settings)
+    self.whisper = WhisperClient(settings)
     self.transcription = TranscriptionService(settings)
     self.web_search = WebSearchClient(settings)
     self.personas = PersonaManager(settings.personas_config_path)
@@ -509,14 +510,19 @@ class BotApp:
   async def _send_startup_notification(self) -> None:
     if not self.settings.service_message_id: return
 
+    ollama_ok, ollama_status = await self.ollama.status()
     search_ok, search_status = await self.web_search.status()
+    whisper_ok, whisper_status = await self.whisper.status()
+    ollama_icon = 'ok' if ollama_ok else 'fail'
     search_icon = 'ok' if search_ok else 'fail'
+    whisper_icon = 'ok' if whisper_ok else 'fail'
 
     text = (
       f'{self.settings.bot_name} запущен.\n'
       f'Версия: {self.settings.app_version}\n'
       f'Модель по умолчанию: {self.personas.default().model}\n'
-      f'Ollama: {self.settings.ollama_base_url}\n'
+      f'Ollama: {ollama_icon} {ollama_status}\n'
+      f'Whisper: {whisper_icon} {whisper_status}\n'
       f'Web-search: {search_icon} {search_status}'
     )
 
