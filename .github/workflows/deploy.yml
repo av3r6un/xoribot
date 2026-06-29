@@ -51,6 +51,7 @@ jobs:
             --exclude=__pycache__ \
             --exclude=.github \
             --exclude=.env \
+            --exclude=models \
             --exclude='*/.env' \
             --exclude='tools/searxng/.env' \
             -czf "${archive_path}" .
@@ -87,5 +88,7 @@ jobs:
             APP_BUILD_TIME=${{ env.APP_BUILD_TIME }}
             APP_GIT_SHA=${{ env.APP_GIT_SHA }}
             EOF
+            mkdir -p models/whisper/hf-hub-cache
+            chmod 0777 models/whisper/hf-hub-cache
             docker compose down
             docker compose up -d --build

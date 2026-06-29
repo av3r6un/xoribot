@@ -55,8 +55,9 @@ services:
       - ./tools/whisper/.env
     environment:
       PRELOAD_MODELS: '["Systran/faster-whisper-small"]'
+      HF_HUB_CACHE: /home/ubuntu/.cache/huggingface/hub
     volumes:
-      - ./models:/root/.cache/huggingface
+      - ./models/whisper/hf-hub-cache:/home/ubuntu/.cache/huggingface/hub
     networks:
       - xoribot-tools
 
