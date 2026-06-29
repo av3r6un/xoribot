@@ -154,13 +154,13 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 Длинные записи режутся на части по `WHISPER_SEGMENT_SECONDS` (по умолчанию 600 секунд), и бот показывает промежуточный текст по мере обработки сегментов.
 В разрешённых группах, супергруппах и топиках аудио расшифровывается без mention бота. Текстовые сообщения в группах по-прежнему требуют mention, reply, адресную команду или persona-tag.
 
-Whisper-модели хранятся на хосте в `./models/whisper/hf-hub-cache` и примонтированы в контейнер Speaches как `/home/ubuntu/.cache/huggingface/hub`. Эта папка не входит в git, Docker build context и deploy-архив, поэтому модели не должны удаляться при `docker compose down/up` или SSH deploy.
+Whisper-модели хранятся на хосте в `tools/whisper/models/hf-hub-cache` и примонтированы в контейнер Speaches как `/home/ubuntu/.cache/huggingface/hub`. Создай эту папку сам на deploy-сервере внутри project/deploy directory.
 
-Перед первым запуском можно создать её явно:
+Пример:
 
 ```bash
-mkdir -p models/whisper/hf-hub-cache
-chmod 0777 models/whisper/hf-hub-cache
+mkdir -p tools/whisper/models/hf-hub-cache
+chmod 0777 tools/whisper/models/hf-hub-cache
 ```
 
 Если Speaches пишет `Model ... is not installed locally`, скачай модель один раз:

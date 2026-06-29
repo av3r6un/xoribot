@@ -1,7 +1,7 @@
 .env
-models/
 .git
 .venv
+tools/whisper/models/
 __pycache__/
 *.pyc
 build/
