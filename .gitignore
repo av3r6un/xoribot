@@ -12,7 +12,7 @@ wheels/
 # Local config
 .env
 **/.env
-models/
+tools/whisper/models/
 AGENTS.md
 CONTEXT.md
 STYLE.md
