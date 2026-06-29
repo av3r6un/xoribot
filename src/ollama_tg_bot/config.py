@@ -137,7 +137,7 @@ def load_settings() -> Settings:
     allow_all=_bool('ALLOW_ALL', False),
     require_mention_in_groups=_bool('REQUIRE_MENTION_IN_GROUPS', True),
     log_message_text=_bool('LOG_MESSAGE_TEXT', False),
-    telegram_parse_mode=_parse_mode(os.getenv('TELEGRAM_PARSE_MODE', 'Markdown')),
+    telegram_parse_mode=_parse_mode(os.getenv('TELEGRAM_PARSE_MODE', 'HTML')),
     telegram_stream_edit_interval_ms=max(_int('TELEGRAM_STREAM_EDIT_INTERVAL_MS', 5000), 5000),
     max_history_messages=_int('MAX_HISTORY_MESSAGES', 12),
     max_input_chars=_int('MAX_INPUT_CHARS', 4000),
@@ -161,4 +161,5 @@ def _parse_mode(value: str | None) -> str | None:
   if not value: return None
   if value.lower() == 'none': return None
   if value.lower() == 'markdownv2': return 'Markdown'
+  if value.lower() == 'html': return 'HTML'
   return value

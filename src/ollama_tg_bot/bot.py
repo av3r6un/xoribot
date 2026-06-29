@@ -20,6 +20,7 @@ from .ollama_client import OllamaClient, OllamaError
 from .personas import Persona, PersonaManager
 from .security import is_allowed
 from .sessions import Session, SessionManager
+from .telegram_format import telegram_html
 from .telegram_utils import (
   command_name,
   is_reply_to_bot,
@@ -172,19 +173,11 @@ class BotApp:
       logger.warning('access denied chat_id=%s user_id=%s', message.chat.id, self._user_id(message))
       return
 
-    if not should_answer_message(
-      message,
-      self.bot_id,
-      self.bot_username,
-      self.settings.require_mention_in_groups,
-      has_persona_tag=bool(persona_match.matched_tag),
-      text=text,
-    ):
-      return
+    if not self._should_transcribe_audio_message(message, bool(persona_match.matched_tag), text): return
 
     routed_text = strip_bot_mention(persona_match.text, self.bot_username)
     command = command_name(routed_text)
-    if command and command[0] in COMMANDS:
+    if message.chat.type == ChatType.PRIVATE and command and command[0] in COMMANDS:
       await self._handle_command(message, command[0], command[1], persona)
       return
 
@@ -425,8 +418,9 @@ class BotApp:
     return [dict(role='system', content=context)]
 
   async def _safe_answer(self, message: Message, text: str, parse_mode: str | None = None) -> Message:
+    formatted_text, formatted_parse_mode = self._format_text(text, parse_mode)
     try:
-      return await message.answer(text, parse_mode=parse_mode)
+      return await message.answer(formatted_text, parse_mode=formatted_parse_mode)
     except TelegramBadRequest as exc:
       if self._is_parse_error(exc):
         return await message.answer(text, parse_mode=None)
@@ -434,7 +428,7 @@ class BotApp:
     except TelegramRetryAfter as exc:
       logger.warning('telegram send flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
       await asyncio.sleep(exc.retry_after)
-      return await message.answer(text, parse_mode=parse_mode)
+      return await message.answer(formatted_text, parse_mode=formatted_parse_mode)
 
   async def _safe_final_edit(self, message: Message, text: str) -> bool:
     parse_mode = self.settings.telegram_parse_mode if self._markdown_looks_complete(text) else None
@@ -450,8 +444,9 @@ class BotApp:
     parse_mode: str | None = None,
     wait_retry: bool = False,
   ) -> bool:
+    formatted_text, formatted_parse_mode = self._format_text(text, parse_mode)
     try:
-      await message.edit_text(text, parse_mode=parse_mode)
+      await message.edit_text(formatted_text, parse_mode=formatted_parse_mode)
       return True
     except TelegramBadRequest as exc:
       if 'message is not modified' in str(exc).lower(): return False
@@ -463,6 +458,11 @@ class BotApp:
       if not wait_retry: return False
       await asyncio.sleep(exc.retry_after)
       return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=False)
+
+  @staticmethod
+  def _format_text(text: str, parse_mode: str | None) -> tuple[str, str | None]:
+    if parse_mode != 'HTML': return text, parse_mode
+    return telegram_html(text), parse_mode
 
   @staticmethod
   def _split_for_telegram(text: str, limit: int) -> tuple[str, str]:
@@ -683,6 +683,17 @@ class BotApp:
     if mime_type.startswith('audio/'): return True
     file_name = document.file_name or ''
     return Path(file_name).suffix.lower() in TRANSCRIBABLE_AUDIO_EXTENSIONS
+
+  def _should_transcribe_audio_message(self, message: Message, has_persona_tag: bool, text: str | None) -> bool:
+    if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}: return True
+    return should_answer_message(
+      message,
+      self.bot_id,
+      self.bot_username,
+      self.settings.require_mention_in_groups,
+      has_persona_tag=has_persona_tag,
+      text=text,
+    )
 
   def _session(self, message: Message, persona: Persona) -> Session:
     user_id = self._session_user_id(message)
