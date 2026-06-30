@@ -471,6 +471,7 @@ class BotApp:
     wait_retry: bool = False,
   ) -> bool:
     formatted_text, formatted_parse_mode = self._format_text(text, parse_mode)
+    if not self._has_telegram_text(formatted_text): return False
     try:
       await message.edit_text(formatted_text, parse_mode=formatted_parse_mode)
       return True
@@ -489,6 +490,12 @@ class BotApp:
   def _format_text(text: str, parse_mode: str | None) -> tuple[str, str | None]:
     if parse_mode != 'HTML': return text, parse_mode
     return telegram_html(text), parse_mode
+
+  @staticmethod
+  def _has_telegram_text(text: str) -> bool:
+    if not text.strip(): return False
+    without_tags = re.sub(r'<[^>]*>', '', text)
+    return bool(without_tags.strip())
 
   @staticmethod
   def _split_for_telegram(text: str, limit: int) -> tuple[str, int]:

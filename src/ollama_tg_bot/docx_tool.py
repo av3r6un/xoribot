@@ -12,6 +12,7 @@ from docx.shared import Pt
 
 DOCX_BLOCK_RE = re.compile(r'```(?:xoridocx|docx-json)\s*(.*?)```', re.S | re.I)
 DOCX_BLOCK_START_RE = re.compile(r'```(?:xoridocx|docx-json)\b', re.I)
+DOCX_BLOCK_PARTIAL_START_RE = re.compile(r'```(?:x|xo|xor|xori|xorid|xorido|xoridoc|xoridocx|d|do|doc|docx|docx-|docx-j|docx-js|docx-jso|docx-json)?$', re.I)
 
 DOCX_TOOL_PROMPT = '''
 Если пользователь просит создать Word/.docx документ, сначала дай короткий обычный ответ для Telegram,
@@ -69,6 +70,8 @@ def visible_docx_text(text: str) -> str:
   visible = DOCX_BLOCK_RE.sub('', text)
   start = DOCX_BLOCK_START_RE.search(visible)
   if start: visible = visible[:start.start()]
+  partial_start = DOCX_BLOCK_PARTIAL_START_RE.search(visible)
+  if partial_start: visible = visible[:partial_start.start()]
   return visible.strip()
 
 
