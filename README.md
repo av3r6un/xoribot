@@ -11,6 +11,7 @@
 - команды `/start`, `/help`, `/reset`, `/new`, `/status`, `/model`, `/models`, `/agents`, `/ping`;
 - персоны через псевдо-теги из `personas.yaml`, например `@xori` и `@web`;
 - streaming-ответы через Ollama `/api/chat`;
+- создание Word `.docx` по JSON-разметке, которую сразу генерирует модель;
 - безопасные сообщения об ошибках Ollama без stack trace пользователю.
 - автоматическая расшифровка аудио в разрешённых группах, супергруппах и топиках.
 
@@ -78,7 +79,8 @@ personas:
       - "@xori"
     model: qwen25-7b
     options: {}
-    tools: []
+    tools:
+      - docx
     system_prompt: >
       Ты лаконичный и полезный Telegram-собеседник.
 
@@ -116,6 +118,8 @@ personas:
 У каждой персоны отдельная история диалога. `/status @web`, `/model @web`, `/models @web`, `/reset @web` работают с web-research сессией.
 
 Если у персоны есть `tools: [web_search]`, бот делает запрос в SearXNG и добавляет результаты в prompt только для текущего ответа. Эти snippets не сохраняются в историю.
+
+Если у персоны есть `tools: [docx]`, бот добавляет в prompt контракт для Word-документа. Когда пользователь просит `.docx`, модель должна вернуть короткий обычный ответ и fenced-блок `xoridocx` с JSON-разметкой: `filename`, `title`, `properties`, `blocks`. Поддерживаются блоки `heading`, `paragraph`, `list`, `table`, `page_break`; inline-разметка идёт через `runs` с `bold`, `italic`, `underline`. Бот не придумывает структуру документа сам, а только валидирует JSON и отправляет готовый `.docx`.
 
 ## Локальный запуск
 

@@ -13,9 +13,10 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Audio, CallbackQuery, Document, InlineKeyboardButton, InlineKeyboardMarkup, Message, Voice
+from aiogram.types import Audio, CallbackQuery, Document, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, Voice
 
 from .config import Settings
+from .docx_tool import DOCX_TOOL_PROMPT, DocxToolError, build_docx, extract_docx_specs, visible_docx_text
 from .ollama_client import OllamaClient, OllamaError
 from .personas import Persona, PersonaManager
 from .security import is_allowed
@@ -277,8 +278,16 @@ class BotApp:
       async with self._typing(message):
         tool_messages = await self._tool_messages(persona, text)
         response = await self._stream_response(message, session, persona, tool_messages)
+        visible_response, docx_specs = extract_docx_specs(response)
+        if docx_specs:
+          await self._send_docx_documents(message, docx_specs)
+          response = visible_response or 'Документ готов.'
     except WebSearchError as exc:
       logger.warning('web-search error chat_id=%s user_id=%s error=%s', message.chat.id, self._user_id(message), exc)
+      await self._safe_answer(message, exc.user_message, parse_mode=None)
+      return
+    except DocxToolError as exc:
+      logger.warning('docx tool error chat_id=%s user_id=%s error=%s', message.chat.id, self._user_id(message), exc)
       await self._safe_answer(message, exc.user_message, parse_mode=None)
       return
     except OllamaError as exc:
@@ -361,6 +370,7 @@ class BotApp:
   ) -> str:
     response = ''
     visible_text = ''
+    sent_visible_chars = 0
     sent_message = await self._send_thinking_message(message)
     last_edit_at = 0.0
     last_text = ''
@@ -374,10 +384,14 @@ class BotApp:
     try:
       async for delta in self.ollama.stream_chat(messages, session.model, persona.options):
         response += delta
-        visible_text += delta
+        full_visible_text = visible_docx_text(response)
+        if sent_visible_chars > len(full_visible_text): sent_visible_chars = len(full_visible_text)
+        visible_text = full_visible_text[sent_visible_chars:]
 
         while len(visible_text) >= limit:
-          part, visible_text = self._split_for_telegram(visible_text, limit)
+          part, split_at = self._split_for_telegram(visible_text, limit)
+          sent_visible_chars += split_at
+          visible_text = full_visible_text[sent_visible_chars:]
           await self._safe_final_edit(sent_message, part)
           sent_message = await self._send_thinking_message(message)
           last_edit_at = 0.0
@@ -405,17 +419,29 @@ class BotApp:
     return response.strip() or final_text
 
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
-    if 'web_search' not in persona.tools: return []
-    if not self.settings.web_search_base_url:
-      raise WebSearchError(
-        'WEB_SEARCH_BASE_URL is not configured',
-        user_message='Web-search не настроен. Добавь WEB_SEARCH_BASE_URL в .env и перезапусти контейнер.',
-      )
+    messages: list[dict] = []
+    if 'docx' in persona.tools:
+      messages.append(dict(role='system', content=DOCX_TOOL_PROMPT))
 
-    results = await self.web_search.search(text)
-    context = search_context(results)
-    if not context: return []
-    return [dict(role='system', content=context)]
+    if 'web_search' in persona.tools:
+      if not self.settings.web_search_base_url:
+        raise WebSearchError(
+          'WEB_SEARCH_BASE_URL is not configured',
+          user_message='Web-search не настроен. Добавь WEB_SEARCH_BASE_URL в .env и перезапусти контейнер.',
+        )
+
+      results = await self.web_search.search(text)
+      context = search_context(results)
+      if context: messages.append(dict(role='system', content=context))
+
+    return messages
+
+  async def _send_docx_documents(self, message: Message, specs: list[dict]) -> None:
+    with tempfile.TemporaryDirectory(prefix='xoribot-docx-') as temp_dir_name:
+      temp_dir = Path(temp_dir_name)
+      for spec in specs:
+        path = build_docx(spec, temp_dir)
+        await message.answer_document(FSInputFile(path), caption=f'Готово: {path.name}')
 
   async def _safe_answer(self, message: Message, text: str, parse_mode: str | None = None) -> Message:
     formatted_text, formatted_parse_mode = self._format_text(text, parse_mode)
@@ -465,11 +491,11 @@ class BotApp:
     return telegram_html(text), parse_mode
 
   @staticmethod
-  def _split_for_telegram(text: str, limit: int) -> tuple[str, str]:
+  def _split_for_telegram(text: str, limit: int) -> tuple[str, int]:
     part = text[:limit]
     split_at = max(part.rfind('\n'), part.rfind(' '))
     if split_at < limit // 2: split_at = limit
-    return text[:split_at].strip(), text[split_at:].lstrip()
+    return text[:split_at].strip(), split_at
 
   @staticmethod
   def _is_parse_error(exc: TelegramBadRequest) -> bool:
