@@ -6,30 +6,30 @@ import tempfile
 import time
 from pathlib import Path
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .config import Settings
-from .docx_service import DocxService
-from .docx_tool import DocxToolError, extract_docx_specs
 from .filters import AudioAttachment, audio_attachment, looks_like_docx_request
 from .ollama_client import OllamaClient, OllamaError
 from .personas import Persona, PersonaManager
-from .security import is_allowed
+from .routes import register_routes
+from .services import DocxService, DocxToolError, ResponseStreamer, extract_docx_specs
 from .sessions import Session, SessionManager
-from .streaming import ResponseStreamer
-from .telegram_utils import (
+from .utils import (
+  TelegramSender,
+  TranscriptionService,
+  TypingLoop,
   command_name,
+  is_allowed,
   is_reply_to_bot,
   message_chunks,
   should_answer_message,
   strip_bot_mention,
 )
-from .transcription import TranscriptionService
-from .utils import TelegramSender, TypingLoop
 from .web_search import WebSearchClient, WebSearchError, search_context
 from .whisper_client import WhisperClient, WhisperError
 
@@ -75,7 +75,7 @@ class BotApp:
     self.model_choices: dict[str, str] = {}
     self.bot_id: int | None = None
     self.bot_username: str | None = settings.bot_username
-    self._register_handlers()
+    register_routes(self)
     self.dp.include_router(self.router)
 
   async def run(self) -> None:
@@ -86,17 +86,7 @@ class BotApp:
     await self._send_startup_notification()
     await self.dp.start_polling(self.bot)
 
-  def _register_handlers(self) -> None:
-
-    @self.router.message()
-    async def handle_message(message: Message) -> None:
-      await self._handle_message(message)
-
-    @self.router.callback_query(F.data.startswith('model:'))
-    async def handle_model_callback(callback: CallbackQuery) -> None:
-      await self._handle_model_callback(callback)
-
-  async def _handle_message(self, message: Message) -> None:
+  async def handle_message(self, message: Message) -> None:
     if message.text:
       await self._handle_text(message)
       return
@@ -318,7 +308,7 @@ class BotApp:
       lines.append(f'{persona.tag_text} — {persona.name}; модель: {persona.model}; {tools}')
     await message.answer('\n'.join(lines))
 
-  async def _handle_model_callback(self, callback: CallbackQuery) -> None:
+  async def handle_model_callback(self, callback: CallbackQuery) -> None:
     message = callback.message
     if not isinstance(message, Message):
       await callback.answer()

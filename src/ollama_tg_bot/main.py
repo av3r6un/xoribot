@@ -4,8 +4,7 @@ import asyncio
 import logging
 
 from .bot import run_bot
-from .config import load_settings
-from .logging_config import setup_logging
+from .config import load_settings, setup_logging
 
 
 logger = logging.getLogger(__name__)

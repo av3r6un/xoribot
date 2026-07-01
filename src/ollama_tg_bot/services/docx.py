@@ -5,10 +5,10 @@ from pathlib import Path
 
 from aiogram.types import FSInputFile, Message
 
+from ..ollama_client import OllamaClient
+from ..personas import Persona
+from ..sessions import Session, SessionManager
 from .docx_tool import DOCX_DELEGATE_PROMPT, DOCX_TOOL_PROMPT, DocxToolError, build_docx, extract_docx_specs
-from .ollama_client import OllamaClient
-from .personas import Persona
-from .sessions import Session, SessionManager
 
 
 class DocxService:

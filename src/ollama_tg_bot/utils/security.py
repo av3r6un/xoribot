@@ -3,7 +3,7 @@ from __future__ import annotations
 from aiogram.enums import ChatType
 from aiogram.types import Message
 
-from .config import Settings
+from ..config import Settings
 
 
 def is_allowed(settings: Settings, message: Message) -> bool:
