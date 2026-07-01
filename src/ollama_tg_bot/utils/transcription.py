@@ -8,8 +8,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Settings
-from .whisper_client import WhisperClient, WhisperError
+from ..config import Settings
+from ..whisper_client import WhisperClient, WhisperError
 
 
 logger = logging.getLogger(__name__)

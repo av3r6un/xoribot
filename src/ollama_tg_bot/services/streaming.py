@@ -6,14 +6,12 @@ import time
 from aiogram.enums import ChatType
 from aiogram.types import Message
 
-from .config import Settings
+from ..config import Settings
+from ..ollama_client import OllamaClient, OllamaError
+from ..personas import Persona
+from ..sessions import Session, SessionManager
+from ..utils import TelegramSender, message_chunks, telegram_html
 from .docx_tool import visible_docx_text
-from .ollama_client import OllamaClient, OllamaError
-from .personas import Persona
-from .sessions import Session, SessionManager
-from .telegram_format import telegram_html
-from .telegram_utils import message_chunks
-from .utils import TelegramSender
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +55,7 @@ class ResponseStreamer:
     response = ''
     visible_text = ''
     sent_visible_chars = 0
-    sent_message = await self.sender.thinking_message(message)
+    sent_message: Message | None = None
     last_edit_at = 0.0
     last_text = ''
     limit = min(self.settings.max_telegram_message_chars, 3900)
@@ -78,29 +76,44 @@ class ResponseStreamer:
           part, split_at = self.sender.split_for_telegram(visible_text, limit)
           sent_visible_chars += split_at
           visible_text = full_visible_text[sent_visible_chars:]
-          await self.sender.final_edit(sent_message, part)
-          sent_message = await self.sender.thinking_message(message)
+          if sent_message:
+            await self.sender.final_edit(sent_message, part)
+          else:
+            await self.sender.answer(message, part, parse_mode=self.settings.telegram_parse_mode)
+          sent_message = None
           last_edit_at = 0.0
           last_text = ''
 
         now = time.monotonic()
         text = visible_text.strip()
         if text and text != last_text and now - last_edit_at >= edit_interval:
-          edited = await self.sender.edit(sent_message, text, parse_mode=self.settings.telegram_parse_mode)
-          if edited:
+          if sent_message:
+            edited = await self.sender.edit(sent_message, text, parse_mode=self.settings.telegram_parse_mode)
+            if edited:
+              last_edit_at = now
+              last_text = text
+          else:
+            sent_message = await self.sender.answer(message, text, parse_mode=self.settings.telegram_parse_mode)
             last_edit_at = now
             last_text = text
     except OllamaError as exc:
       if not response.strip(): raise
       final_text = visible_text.strip()
       if final_text:
-        await self.sender.final_edit(sent_message, final_text)
+        if sent_message:
+          await self.sender.final_edit(sent_message, final_text)
+        else:
+          await self.sender.answer(message, final_text, parse_mode=self.settings.telegram_parse_mode)
       await self.sender.answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
       logger.warning('ollama stream interrupted after partial response: %s', exc)
       return response.strip()
 
-    final_text = visible_text.strip() or 'Готово.'
-    await self.sender.final_edit(sent_message, final_text)
+    final_text = visible_text.strip()
+    if final_text:
+      if sent_message:
+        await self.sender.final_edit(sent_message, final_text)
+      else:
+        await self.sender.answer(message, final_text, parse_mode=self.settings.telegram_parse_mode)
     logger.info('telegram stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
     return response.strip() or final_text
 
@@ -142,8 +155,9 @@ class ResponseStreamer:
       logger.warning('ollama draft stream interrupted after partial response: %s', exc)
       return response.strip()
 
-    final_text = visible_text.strip() or 'Готово.'
-    await self._send_final_text(message, final_text)
+    final_text = visible_text.strip()
+    if final_text:
+      await self._send_final_text(message, final_text)
     logger.info('telegram draft stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
     return response.strip() or final_text
 

@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import InputRichMessage, Message
 
 from ..config import Settings
-from ..telegram_format import telegram_html
+from .telegram_format import telegram_html
 
 
 logger = logging.getLogger(__name__)
@@ -61,9 +61,6 @@ class TelegramSender:
       if not wait_retry: return False
       await asyncio.sleep(exc.retry_after)
       return await self.edit(message, text, parse_mode=parse_mode, wait_retry=False)
-
-  async def thinking_message(self, message: Message) -> Message:
-    return await self.answer(message, 'Генерирую ответ', parse_mode=None)
 
   async def thinking_draft(self, message: Message) -> int | None:
     draft_id = id(message) % 2147483647 or 1
