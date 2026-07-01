@@ -15,9 +15,10 @@ DOCX_BLOCK_START_RE = re.compile(r'```(?:xoridocx|docx-json)\b', re.I)
 DOCX_BLOCK_PARTIAL_START_RE = re.compile(r'```(?:x|xo|xor|xori|xorid|xorido|xoridoc|xoridocx|d|do|doc|docx|docx-|docx-j|docx-js|docx-jso|docx-json)?$', re.I)
 
 DOCX_TOOL_PROMPT = '''
-Если пользователь просит создать Word/.docx документ, сначала дай короткий обычный ответ для Telegram,
-а затем добавь один fenced-блок ```xoridocx с JSON-разметкой документа. Не выводи этот JSON вне блока.
-Разметку документа создаёшь ты сразу, бот только запечатывает её в .docx.
+Создай Word/.docx документ.
+Не отвечай обычным текстом. Верни только один fenced-блок ```xoridocx
+с JSON-разметкой документа. Разметку документа создаёшь ты сразу,
+бот только запечатывает её в .docx.
 
 Формат:
 ```xoridocx
@@ -44,6 +45,33 @@ DOCX_TOOL_PROMPT = '''
 Для heading level должен быть 1-4. Filename должен заканчиваться на .docx.
 '''.strip()
 
+DOCX_DELEGATE_PROMPT = '''
+Пользователь попросил создать Word/.docx документ.
+Не отвечай обычным текстом. Верни только строку @docx и один fenced-блок ```xoridocx
+с готовой JSON-разметкой документа. Разметку документа создаёшь ты сразу.
+Не добавляй пояснения до или после блока.
+
+Формат:
+@docx
+```xoridocx
+{
+  "filename": "document.docx",
+  "title": "Название документа",
+  "properties": {"author": "XoriBot", "subject": "Тема"},
+  "blocks": [
+    {"type": "heading", "level": 1, "text": "Заголовок"},
+    {"type": "paragraph", "runs": [
+      {"text": "Обычный текст "},
+      {"text": "жирный", "bold": true},
+      {"text": " и курсив", "italic": true}
+    ]},
+    {"type": "list", "ordered": false, "items": ["Пункт 1", "Пункт 2"]},
+    {"type": "table", "headers": ["Колонка 1", "Колонка 2"], "rows": [["A", "B"]]}
+  ]
+}
+```
+'''.strip()
+
 
 class DocxToolError(Exception):
   user_message = 'Не удалось создать .docx. Проверь разметку документа.'
@@ -62,7 +90,7 @@ def extract_docx_specs(text: str) -> tuple[str, list[dict]]:
       specs.append(_load_spec(raw))
     return ''
 
-  visible_text = DOCX_BLOCK_RE.sub(replace, text).strip()
+  visible_text = _strip_docx_tag(DOCX_BLOCK_RE.sub(replace, text)).strip()
   return visible_text, specs
 
 
@@ -72,7 +100,7 @@ def visible_docx_text(text: str) -> str:
   if start: visible = visible[:start.start()]
   partial_start = DOCX_BLOCK_PARTIAL_START_RE.search(visible)
   if partial_start: visible = visible[:partial_start.start()]
-  return visible.strip()
+  return _strip_docx_tag(visible).strip()
 
 
 def build_docx(spec: dict, destination: Path) -> Path:
@@ -248,3 +276,7 @@ def _int_value(value: Any, default: int) -> int:
 def _clean_text(value: Any) -> str:
   if value is None: return ''
   return str(value).replace('\x00', '').strip()
+
+
+def _strip_docx_tag(text: str) -> str:
+  return re.sub(r'^\s*@docx\b[:\s-]*', '', text, flags=re.I)

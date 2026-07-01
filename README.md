@@ -43,7 +43,7 @@ ALLOWED_GROUP_IDS=-1003991214476
 
 `ALLOW_ALL`, `REQUIRE_MENTION_IN_GROUPS`, `LOG_MESSAGE_TEXT`, `MAX_HISTORY_MESSAGES`, `MAX_INPUT_CHARS`, `MAX_CONTEXT_CHARS`, `MAX_TELEGRAM_MESSAGE_CHARS`, `WEB_SEARCH_MAX_RESULTS`, `WEB_SEARCH_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `TELEGRAM_PARSE_MODE` и `TELEGRAM_STREAM_EDIT_INTERVAL_MS` можно задать через env, если нужно переопределить дефолты. В `.env.example` они не вынесены специально, чтобы рабочий `.env` оставался коротким.
 
-В личных чатах бот использует `sendRichMessageDraft` с `<tg-thinking>Думаю</tg-thinking>` как ephemeral-preview на время генерации, а финальный ответ отправляет отдельным rich message. В группах Telegram не принимает `sendRichMessageDraft`, поэтому там используется обычный текстовый fallback `Генерирую ответ`.
+В личных чатах обычные текстовые ответы сначала отправляют ephemeral draft через `sendRichMessageDraft` с `<tg-thinking>Thinking...</tg-thinking>`. Если Telegram не принимает rich draft или чат не private, бот откатывается к обычному streaming через редактирование одного сообщения. Документная персона `@docx` работает отдельно и отправляет только готовый файл без streaming/edit.
 
 `SERVICE_MESSAGE_ID` включает уведомление при каждом запуске бота. Это может быть Telegram user id, group id, channel id или публичный канал в формате `@channel_username`. Для канала бот должен быть админом, для пользователя пользователь должен сначала написать боту.
 
@@ -79,10 +79,20 @@ personas:
       - "@xori"
     model: qwen25-7b
     options: {}
+    tools: []
+    system_prompt: >
+      Ты лаконичный и полезный Telegram-собеседник.
+
+  docx:
+    name: Docx Builder
+    tags:
+      - "@docx"
+    model: qwen25-7b
+    options: {}
     tools:
       - docx
     system_prompt: >
-      Ты лаконичный и полезный Telegram-собеседник.
+      Ты ассистент для создания Word .docx документов.
 
   web-research:
     name: Web Research
@@ -110,16 +120,19 @@ personas:
 
 ```text
 @xori объясни проще
+@docx создай документ про Docker
 @web найди актуальную информацию
 ```
 
-`@xori` и `@web` — это псевдо-теги в тексте, а не настоящие Telegram usernames. В группах бот должен получать такие сообщения: либо отключи BotFather privacy mode, либо пиши тег в reply на сообщение бота, либо используй настоящий mention бота вместе с псевдо-тегом.
+`@xori`, `@docx` и `@web` — это псевдо-теги в тексте, а не настоящие Telegram usernames. В группах бот должен получать такие сообщения: либо отключи BotFather privacy mode, либо пиши тег в reply на сообщение бота, либо используй настоящий mention бота вместе с псевдо-тегом.
 
 У каждой персоны отдельная история диалога. `/status @web`, `/model @web`, `/models @web`, `/reset @web` работают с web-research сессией.
 
 Если у персоны есть `tools: [web_search]`, бот делает запрос в SearXNG и добавляет результаты в prompt только для текущего ответа. Эти snippets не сохраняются в историю.
 
-Если у персоны есть `tools: [docx]`, бот добавляет в prompt контракт для Word-документа. Когда пользователь просит `.docx`, модель должна вернуть короткий обычный ответ и fenced-блок `xoridocx` с JSON-разметкой: `filename`, `title`, `properties`, `blocks`. Поддерживаются блоки `heading`, `paragraph`, `list`, `table`, `page_break`; inline-разметка идёт через `runs` с `bold`, `italic`, `underline`. Бот не придумывает структуру документа сам, а только валидирует JSON и отправляет готовый `.docx`.
+`tools: [docx]` должен быть только у документной персоны `@docx`. Эта персона не стримит и не редактирует сообщения: бот делает один non-stream запрос к Ollama, ждёт fenced-блок `xoridocx` с JSON-разметкой и отправляет один готовый `.docx` файл. Поддерживаются блоки `heading`, `paragraph`, `list`, `table`, `page_break`; inline-разметка идёт через `runs` с `bold`, `italic`, `underline`.
+
+Если у обычной персоны вроде `@xori` просят Word/.docx документ, бот делает non-stream delegate-запрос: модель должна вернуть `@docx` и JSON-разметку, после чего бот отправляет файл без показа JSON пользователю.
 
 ## Локальный запуск
 

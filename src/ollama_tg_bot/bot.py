@@ -1,27 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
-import re
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.enums import ChatAction, ChatType
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Audio, CallbackQuery, Document, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputRichMessage, Message, Voice
+from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from .config import Settings
-from .docx_tool import DOCX_TOOL_PROMPT, DocxToolError, build_docx, extract_docx_specs, visible_docx_text
+from .docx_service import DocxService
+from .docx_tool import DocxToolError, extract_docx_specs
+from .filters import AudioAttachment, audio_attachment, looks_like_docx_request
 from .ollama_client import OllamaClient, OllamaError
 from .personas import Persona, PersonaManager
 from .security import is_allowed
 from .sessions import Session, SessionManager
-from .telegram_format import telegram_html
+from .streaming import ResponseStreamer
 from .telegram_utils import (
   command_name,
   is_reply_to_bot,
@@ -30,6 +29,7 @@ from .telegram_utils import (
   strip_bot_mention,
 )
 from .transcription import TranscriptionService
+from .utils import TelegramSender, TypingLoop
 from .web_search import WebSearchClient, WebSearchError, search_context
 from .whisper_client import WhisperClient, WhisperError
 
@@ -49,32 +49,6 @@ COMMANDS = {
   'ping',
 }
 
-TRANSCRIBABLE_AUDIO_EXTENSIONS = {
-  '.3gp',
-  '.aac',
-  '.amr',
-  '.caf',
-  '.flac',
-  '.m4a',
-  '.mp3',
-  '.mp4',
-  '.mpga',
-  '.oga',
-  '.ogg',
-  '.opus',
-  '.wav',
-  '.weba',
-  '.webm',
-}
-
-
-@dataclass(frozen=True)
-class AudioAttachment:
-  file_id: str
-  file_name: str
-  media_kind: str
-
-
 class BotApp:
 
   def __init__(self, settings: Settings) -> None:
@@ -88,6 +62,7 @@ class BotApp:
     self.whisper = WhisperClient(settings)
     self.transcription = TranscriptionService(settings)
     self.web_search = WebSearchClient(settings)
+    self.sender = TelegramSender(self.bot, settings)
     self.personas = PersonaManager(settings.personas_config_path)
     default_persona = self.personas.default()
     self.sessions = SessionManager(
@@ -95,6 +70,8 @@ class BotApp:
       max_history_messages=settings.max_history_messages,
       max_context_chars=settings.max_context_chars,
     )
+    self.streamer = ResponseStreamer(settings, self.ollama, self.sessions, self.sender)
+    self.docx = DocxService(self.ollama, self.sessions)
     self.model_choices: dict[str, str] = {}
     self.bot_id: int | None = None
     self.bot_username: str | None = settings.bot_username
@@ -124,7 +101,7 @@ class BotApp:
       await self._handle_text(message)
       return
 
-    if self._audio_attachment(message):
+    if audio_attachment(message):
       await self._handle_audio_message(message)
 
   async def _handle_text(self, message: Message) -> None:
@@ -163,7 +140,7 @@ class BotApp:
     await self._handle_chat_message(message, routed_text, persona)
 
   async def _handle_audio_message(self, message: Message) -> None:
-    attachment = self._audio_attachment(message)
+    attachment = audio_attachment(message)
     if not attachment: return
 
     text = message.caption or ''
@@ -275,12 +252,24 @@ class BotApp:
     self.sessions.add_user_message(session, text)
 
     try:
+      if 'docx' in persona.tools:
+        response = await self.docx.persona_response(session, persona)
+        await self.docx.send_response(message, response)
+        self.sessions.add_assistant_message(session, response)
+        return
+
+      if looks_like_docx_request(text):
+        response = await self.docx.delegate_response(session, persona)
+        await self.docx.send_response(message, response)
+        self.sessions.add_assistant_message(session, response)
+        return
+
       async with self._typing(message):
         tool_messages = await self._tool_messages(persona, text)
-        response = await self._stream_response(message, session, persona, tool_messages)
+        response = await self.streamer.stream(message, session, persona, tool_messages)
         visible_response, docx_specs = extract_docx_specs(response)
         if docx_specs:
-          await self._send_docx_documents(message, docx_specs)
+          await self.docx.send_documents(message, docx_specs)
           response = visible_response or 'Документ готов.'
     except WebSearchError as exc:
       logger.warning('web-search error chat_id=%s user_id=%s error=%s', message.chat.id, self._user_id(message), exc)
@@ -361,128 +350,8 @@ class BotApp:
     await callback.answer(f'Модель выбрана: {model}')
     await self._safe_edit(message, f'Персона: {session.persona_id}\nТекущая модель: {model}')
 
-  async def _stream_response(
-    self,
-    message: Message,
-    session: Session,
-    persona: Persona,
-    tool_messages: list[dict] | None = None,
-  ) -> str:
-    rich_response = await self._stream_rich_draft_response(message, session, persona, tool_messages)
-    if rich_response is not None: return rich_response
-    return await self._stream_message_response(message, session, persona, tool_messages)
-
-  async def _stream_message_response(
-    self,
-    message: Message,
-    session: Session,
-    persona: Persona,
-    tool_messages: list[dict] | None = None,
-  ) -> str:
-    response = ''
-    visible_text = ''
-    sent_visible_chars = 0
-    sent_message = await self._send_thinking_message(message)
-    last_edit_at = 0.0
-    last_text = ''
-    limit = min(self.settings.max_telegram_message_chars, 3900)
-    edit_interval = self.settings.telegram_stream_edit_interval_ms / 1000
-
-    messages = self.sessions.ollama_messages(session)
-    if tool_messages:
-      messages = messages[:1] + tool_messages + messages[1:]
-
-    try:
-      async for delta in self.ollama.stream_chat(messages, session.model, persona.options):
-        response += delta
-        full_visible_text = visible_docx_text(response)
-        if sent_visible_chars > len(full_visible_text): sent_visible_chars = len(full_visible_text)
-        visible_text = full_visible_text[sent_visible_chars:]
-
-        while len(visible_text) >= limit:
-          part, split_at = self._split_for_telegram(visible_text, limit)
-          sent_visible_chars += split_at
-          visible_text = full_visible_text[sent_visible_chars:]
-          await self._safe_final_edit(sent_message, part)
-          sent_message = await self._send_thinking_message(message)
-          last_edit_at = 0.0
-          last_text = ''
-
-        now = time.monotonic()
-        text = visible_text.strip()
-        if text and text != last_text and now - last_edit_at >= edit_interval:
-          edited = await self._safe_edit(sent_message, text, parse_mode=self.settings.telegram_parse_mode)
-          if edited:
-            last_edit_at = now
-            last_text = text
-    except OllamaError as exc:
-      if not response.strip(): raise
-      final_text = visible_text.strip()
-      if final_text:
-        await self._safe_final_edit(sent_message, final_text)
-      await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
-      logger.warning('ollama stream interrupted after partial response: %s', exc)
-      return response.strip()
-
-    final_text = visible_text.strip() or 'Готово.'
-    await self._safe_final_edit(sent_message, final_text)
-    logger.info('telegram stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
-    return response.strip() or final_text
-
-  async def _stream_rich_draft_response(
-    self,
-    message: Message,
-    session: Session,
-    persona: Persona,
-    tool_messages: list[dict] | None = None,
-  ) -> str | None:
-    if message.chat.type != ChatType.PRIVATE: return None
-
-    draft_id = int(time.time_ns() % 2147483647) or 1
-    if not await self._safe_rich_draft(message, draft_id, '<tg-thinking>Думаю</tg-thinking>'):
-      return None
-
-    response = ''
-    visible_text = ''
-    last_draft_at = 0.0
-    last_text = ''
-    edit_interval = self.settings.telegram_stream_edit_interval_ms / 1000
-
-    messages = self.sessions.ollama_messages(session)
-    if tool_messages:
-      messages = messages[:1] + tool_messages + messages[1:]
-
-    try:
-      async for delta in self.ollama.stream_chat(messages, session.model, persona.options):
-        response += delta
-        visible_text = visible_docx_text(response)
-
-        now = time.monotonic()
-        text = visible_text.strip()
-        if text and text != last_text and now - last_draft_at >= edit_interval:
-          if await self._safe_rich_draft(message, draft_id, telegram_html(text)):
-            last_draft_at = now
-            last_text = text
-    except OllamaError as exc:
-      if not response.strip(): raise
-      final_text = visible_text.strip()
-      if final_text:
-        await self._safe_rich_answer(message, final_text)
-      await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
-      logger.warning('ollama rich stream interrupted after partial response: %s', exc)
-      return response.strip()
-
-    final_text = visible_text.strip()
-    if final_text:
-      await self._safe_rich_answer(message, final_text)
-    logger.info('telegram rich stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
-    return response.strip() or final_text
-
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
     messages: list[dict] = []
-    if 'docx' in persona.tools:
-      messages.append(dict(role='system', content=DOCX_TOOL_PROMPT))
-
     if 'web_search' in persona.tools:
       if not self.settings.web_search_base_url:
         raise WebSearchError(
@@ -496,68 +365,11 @@ class BotApp:
 
     return messages
 
-  async def _send_docx_documents(self, message: Message, specs: list[dict]) -> None:
-    with tempfile.TemporaryDirectory(prefix='xoribot-docx-') as temp_dir_name:
-      temp_dir = Path(temp_dir_name)
-      for spec in specs:
-        path = build_docx(spec, temp_dir)
-        await message.answer_document(FSInputFile(path), caption=f'Готово: {path.name}')
-
   async def _safe_answer(self, message: Message, text: str, parse_mode: str | None = None) -> Message:
-    formatted_text, formatted_parse_mode = self._format_text(text, parse_mode)
-    try:
-      return await message.answer(formatted_text, parse_mode=formatted_parse_mode)
-    except TelegramBadRequest as exc:
-      if self._is_parse_error(exc):
-        return await message.answer(text, parse_mode=None)
-      raise
-    except TelegramRetryAfter as exc:
-      logger.warning('telegram send flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
-      await asyncio.sleep(exc.retry_after)
-      return await message.answer(formatted_text, parse_mode=formatted_parse_mode)
+    return await self.sender.answer(message, text, parse_mode=parse_mode)
 
   async def _safe_final_edit(self, message: Message, text: str) -> bool:
-    parse_mode = self.settings.telegram_parse_mode if self._markdown_looks_complete(text) else None
-    return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=True)
-
-  async def _send_thinking_message(self, message: Message) -> Message:
-    return await self._safe_answer(message, 'Генерирую ответ', parse_mode=None)
-
-  async def _safe_rich_draft(self, message: Message, draft_id: int, html: str) -> bool:
-    if not self._has_telegram_text(html): return False
-    try:
-      await self.bot.send_rich_message_draft(
-        chat_id=message.chat.id,
-        message_thread_id=message.message_thread_id,
-        draft_id=draft_id,
-        rich_message=InputRichMessage(html=html, skip_entity_detection=True),
-      )
-      return True
-    except TelegramBadRequest as exc:
-      logger.warning('telegram rich draft failed chat_id=%s error=%s', message.chat.id, exc)
-      return False
-    except TelegramRetryAfter as exc:
-      logger.warning('telegram rich draft flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
-      await asyncio.sleep(exc.retry_after)
-      return False
-
-  async def _safe_rich_answer(self, message: Message, text: str) -> Message:
-    html, _ = self._format_text(text, 'HTML')
-    if not self._has_telegram_text(html):
-      return await self._safe_answer(message, 'Готово.', parse_mode=None)
-    try:
-      return await self.bot.send_rich_message(
-        chat_id=message.chat.id,
-        message_thread_id=message.message_thread_id,
-        rich_message=InputRichMessage(html=html),
-      )
-    except TelegramBadRequest as exc:
-      logger.warning('telegram rich answer failed chat_id=%s error=%s', message.chat.id, exc)
-      return await self._safe_answer(message, text, parse_mode=self.settings.telegram_parse_mode)
-    except TelegramRetryAfter as exc:
-      logger.warning('telegram rich answer flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
-      await asyncio.sleep(exc.retry_after)
-      return await self._safe_rich_answer(message, text)
+    return await self.sender.final_edit(message, text)
 
   async def _safe_edit(
     self,
@@ -566,75 +378,7 @@ class BotApp:
     parse_mode: str | None = None,
     wait_retry: bool = False,
   ) -> bool:
-    formatted_text, formatted_parse_mode = self._format_text(text, parse_mode)
-    if not self._has_telegram_text(formatted_text): return False
-    try:
-      await message.edit_text(formatted_text, parse_mode=formatted_parse_mode)
-      return True
-    except TelegramBadRequest as exc:
-      if 'message is not modified' in str(exc).lower(): return False
-      if self._is_parse_error(exc):
-        return await self._safe_edit(message, text, parse_mode=None, wait_retry=wait_retry)
-      raise
-    except TelegramRetryAfter as exc:
-      logger.warning('telegram edit flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
-      if not wait_retry: return False
-      await asyncio.sleep(exc.retry_after)
-      return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=False)
-
-  @staticmethod
-  def _format_text(text: str, parse_mode: str | None) -> tuple[str, str | None]:
-    if parse_mode != 'HTML': return text, parse_mode
-    return telegram_html(text), parse_mode
-
-  @staticmethod
-  def _has_telegram_text(text: str) -> bool:
-    if not text.strip(): return False
-    without_tags = re.sub(r'<[^>]*>', '', text)
-    return bool(without_tags.strip())
-
-  @staticmethod
-  def _split_for_telegram(text: str, limit: int) -> tuple[str, int]:
-    part = text[:limit]
-    split_at = max(part.rfind('\n'), part.rfind(' '))
-    if split_at < limit // 2: split_at = limit
-    return text[:split_at].strip(), split_at
-
-  @staticmethod
-  def _is_parse_error(exc: TelegramBadRequest) -> bool:
-    text = str(exc).lower()
-    return (
-      'parse entities' in text
-      or "can't parse" in text
-      or 'entity' in text
-      or 'markdown' in text
-    )
-
-  @staticmethod
-  def _markdown_looks_complete(text: str) -> bool:
-    if text.count('```') % 2: return False
-    without_fences = re.sub(r'```.*?```', '', text, flags=re.S)
-    if without_fences.count('`') % 2: return False
-    if text.count('**') % 2: return False
-    if text.count('__') % 2: return False
-
-    balance = 0
-    escaped = False
-    for char in text:
-      if escaped:
-        escaped = False
-        continue
-      if char == '\\':
-        escaped = True
-        continue
-      if char == '[':
-        balance += 1
-      elif char == ']':
-        if balance <= 0: return False
-        balance -= 1
-    if balance: return False
-
-    return True
+    return await self.sender.edit(message, text, parse_mode=parse_mode, wait_retry=wait_retry)
 
   async def _send_startup_notification(self) -> None:
     if not self.settings.service_message_id: return
@@ -784,35 +528,6 @@ class BotApp:
       body = f'...{body[-preview_limit:]}'
     return f'{header}\n\n{body}'.strip()
 
-  @staticmethod
-  def _audio_attachment(message: Message) -> AudioAttachment | None:
-    voice = message.voice
-    if isinstance(voice, Voice):
-      return AudioAttachment(
-        file_id=voice.file_id,
-        file_name=f'voice_{voice.file_unique_id}.ogg',
-        media_kind='voice',
-      )
-
-    audio = message.audio
-    if isinstance(audio, Audio):
-      file_name = audio.file_name or f'audio_{audio.file_unique_id}.mp3'
-      return AudioAttachment(file_id=audio.file_id, file_name=file_name, media_kind='audio')
-
-    document = message.document
-    if isinstance(document, Document) and BotApp._is_audio_document(document):
-      file_name = document.file_name or f'document_{document.file_unique_id}'
-      return AudioAttachment(file_id=document.file_id, file_name=file_name, media_kind='document')
-
-    return None
-
-  @staticmethod
-  def _is_audio_document(document: Document) -> bool:
-    mime_type = (document.mime_type or '').lower()
-    if mime_type.startswith('audio/'): return True
-    file_name = document.file_name or ''
-    return Path(file_name).suffix.lower() in TRANSCRIBABLE_AUDIO_EXTENSIONS
-
   def _should_transcribe_audio_message(self, message: Message, has_persona_tag: bool, text: str | None) -> bool:
     if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}: return True
     return should_answer_message(
@@ -847,33 +562,8 @@ class BotApp:
       return message.chat.id in self.settings.allowed_group_ids
     return False
 
-  def _typing(self, message: Message) -> '_TypingLoop':
-    return _TypingLoop(self.bot, message.chat.id)
-
-
-class _TypingLoop:
-
-  def __init__(self, bot: Bot, chat_id: int) -> None:
-    self.bot = bot
-    self.chat_id = chat_id
-    self.task: asyncio.Task | None = None
-
-  async def __aenter__(self) -> '_TypingLoop':
-    self.task = asyncio.create_task(self._run())
-    return self
-
-  async def __aexit__(self, exc_type, exc, tb) -> None:
-    if self.task:
-      self.task.cancel()
-      try:
-        await self.task
-      except asyncio.CancelledError:
-        pass
-
-  async def _run(self) -> None:
-    while True:
-      await self.bot.send_chat_action(self.chat_id, ChatAction.TYPING)
-      await asyncio.sleep(4)
+  def _typing(self, message: Message) -> TypingLoop:
+    return self.sender.typing(message)
 
 
 async def run_bot(settings: Settings) -> None:
