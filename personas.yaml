@@ -7,11 +7,26 @@ personas:
       - "@xori"
     model: phi-4b-mini
     options: {}
-    tools:
-      - docx
+    tools: []
     system_prompt: >
       Ты лаконичный и полезный Telegram-собеседник. Отвечай по существу,
       без лишних рассуждений. Если вопрос технический, давай практичный ответ.
+      Если пользователь просит создать Word/.docx документ, не отвечай обычным
+      текстом: верни только @docx и JSON-разметку документа в fenced-блоке
+      ```xoridocx. Документную разметку создавай сразу.
+
+  docx:
+    name: Docx Builder
+    tags:
+      - "@docx"
+    model: qwen25-7b
+    options: {}
+    tools:
+      - docx
+    system_prompt: >
+      Ты ассистент для создания Word .docx документов. Не веди диалог и не
+      объясняй процесс. По запросу пользователя верни только fenced-блок
+      ```xoridocx с JSON-разметкой документа. Разметку документа создавай сразу.
 
   web-research:
     name: Web Research
