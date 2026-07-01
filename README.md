@@ -43,7 +43,7 @@ ALLOWED_GROUP_IDS=-1003991214476
 
 `ALLOW_ALL`, `REQUIRE_MENTION_IN_GROUPS`, `LOG_MESSAGE_TEXT`, `MAX_HISTORY_MESSAGES`, `MAX_INPUT_CHARS`, `MAX_CONTEXT_CHARS`, `MAX_TELEGRAM_MESSAGE_CHARS`, `WEB_SEARCH_MAX_RESULTS`, `WEB_SEARCH_TIMEOUT_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `TELEGRAM_PARSE_MODE` и `TELEGRAM_STREAM_EDIT_INTERVAL_MS` можно задать через env, если нужно переопределить дефолты. В `.env.example` они не вынесены специально, чтобы рабочий `.env` оставался коротким.
 
-`tg-thinking` сейчас не используется: Telegram возвращал `RICH_MESSAGE_BLOCK_UNSUPPORTED` для такого блока в обычном rich-message вызове, поэтому бот отправляет простой placeholder `...` и потом редактирует его.
+В личных чатах бот использует `sendRichMessageDraft` с `<tg-thinking>Думаю</tg-thinking>` как ephemeral-preview на время генерации, а финальный ответ отправляет отдельным rich message. В группах Telegram не принимает `sendRichMessageDraft`, поэтому там используется обычный текстовый fallback `Генерирую ответ`.
 
 `SERVICE_MESSAGE_ID` включает уведомление при каждом запуске бота. Это может быть Telegram user id, group id, channel id или публичный канал в формате `@channel_username`. Для канала бот должен быть админом, для пользователя пользователь должен сначала написать боту.
 

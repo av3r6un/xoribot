@@ -5,7 +5,7 @@ personas:
     name: Xori
     tags:
       - "@xori"
-    model: qwen25-7b
+    model: phi-4b-mini
     options: {}
     tools:
       - docx

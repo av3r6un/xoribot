@@ -13,7 +13,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ChatAction, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Audio, CallbackQuery, Document, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message, Voice
+from aiogram.types import Audio, CallbackQuery, Document, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputRichMessage, Message, Voice
 
 from .config import Settings
 from .docx_tool import DOCX_TOOL_PROMPT, DocxToolError, build_docx, extract_docx_specs, visible_docx_text
@@ -368,6 +368,17 @@ class BotApp:
     persona: Persona,
     tool_messages: list[dict] | None = None,
   ) -> str:
+    rich_response = await self._stream_rich_draft_response(message, session, persona, tool_messages)
+    if rich_response is not None: return rich_response
+    return await self._stream_message_response(message, session, persona, tool_messages)
+
+  async def _stream_message_response(
+    self,
+    message: Message,
+    session: Session,
+    persona: Persona,
+    tool_messages: list[dict] | None = None,
+  ) -> str:
     response = ''
     visible_text = ''
     sent_visible_chars = 0
@@ -413,9 +424,58 @@ class BotApp:
       logger.warning('ollama stream interrupted after partial response: %s', exc)
       return response.strip()
 
-    final_text = visible_text.strip() or 'Нет ответа.'
+    final_text = visible_text.strip() or 'Готово.'
     await self._safe_final_edit(sent_message, final_text)
     logger.info('telegram stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
+    return response.strip() or final_text
+
+  async def _stream_rich_draft_response(
+    self,
+    message: Message,
+    session: Session,
+    persona: Persona,
+    tool_messages: list[dict] | None = None,
+  ) -> str | None:
+    if message.chat.type != ChatType.PRIVATE: return None
+
+    draft_id = int(time.time_ns() % 2147483647) or 1
+    if not await self._safe_rich_draft(message, draft_id, '<tg-thinking>Думаю</tg-thinking>'):
+      return None
+
+    response = ''
+    visible_text = ''
+    last_draft_at = 0.0
+    last_text = ''
+    edit_interval = self.settings.telegram_stream_edit_interval_ms / 1000
+
+    messages = self.sessions.ollama_messages(session)
+    if tool_messages:
+      messages = messages[:1] + tool_messages + messages[1:]
+
+    try:
+      async for delta in self.ollama.stream_chat(messages, session.model, persona.options):
+        response += delta
+        visible_text = visible_docx_text(response)
+
+        now = time.monotonic()
+        text = visible_text.strip()
+        if text and text != last_text and now - last_draft_at >= edit_interval:
+          if await self._safe_rich_draft(message, draft_id, telegram_html(text)):
+            last_draft_at = now
+            last_text = text
+    except OllamaError as exc:
+      if not response.strip(): raise
+      final_text = visible_text.strip()
+      if final_text:
+        await self._safe_rich_answer(message, final_text)
+      await self._safe_answer(message, f'Генерация прервалась: {exc.user_message}', parse_mode=None)
+      logger.warning('ollama rich stream interrupted after partial response: %s', exc)
+      return response.strip()
+
+    final_text = visible_text.strip()
+    if final_text:
+      await self._safe_rich_answer(message, final_text)
+    logger.info('telegram rich stream completed response_chars=%s final_chunk_chars=%s', len(response), len(final_text))
     return response.strip() or final_text
 
   async def _tool_messages(self, persona: Persona, text: str) -> list[dict]:
@@ -461,7 +521,43 @@ class BotApp:
     return await self._safe_edit(message, text, parse_mode=parse_mode, wait_retry=True)
 
   async def _send_thinking_message(self, message: Message) -> Message:
-    return await self._safe_answer(message, '...', parse_mode=None)
+    return await self._safe_answer(message, 'Генерирую ответ', parse_mode=None)
+
+  async def _safe_rich_draft(self, message: Message, draft_id: int, html: str) -> bool:
+    if not self._has_telegram_text(html): return False
+    try:
+      await self.bot.send_rich_message_draft(
+        chat_id=message.chat.id,
+        message_thread_id=message.message_thread_id,
+        draft_id=draft_id,
+        rich_message=InputRichMessage(html=html, skip_entity_detection=True),
+      )
+      return True
+    except TelegramBadRequest as exc:
+      logger.warning('telegram rich draft failed chat_id=%s error=%s', message.chat.id, exc)
+      return False
+    except TelegramRetryAfter as exc:
+      logger.warning('telegram rich draft flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
+      await asyncio.sleep(exc.retry_after)
+      return False
+
+  async def _safe_rich_answer(self, message: Message, text: str) -> Message:
+    html, _ = self._format_text(text, 'HTML')
+    if not self._has_telegram_text(html):
+      return await self._safe_answer(message, 'Готово.', parse_mode=None)
+    try:
+      return await self.bot.send_rich_message(
+        chat_id=message.chat.id,
+        message_thread_id=message.message_thread_id,
+        rich_message=InputRichMessage(html=html),
+      )
+    except TelegramBadRequest as exc:
+      logger.warning('telegram rich answer failed chat_id=%s error=%s', message.chat.id, exc)
+      return await self._safe_answer(message, text, parse_mode=self.settings.telegram_parse_mode)
+    except TelegramRetryAfter as exc:
+      logger.warning('telegram rich answer flood control chat_id=%s retry_after=%s', message.chat.id, exc.retry_after)
+      await asyncio.sleep(exc.retry_after)
+      return await self._safe_rich_answer(message, text)
 
   async def _safe_edit(
     self,
